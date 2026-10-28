@@ -110,10 +110,21 @@ function sendAsync(target, text) {
 // ── 出站出口：把 DSH 侧写进发件箱的消息真正发出 ──────────────────────────
 let draining = false;
 let pumpTicks = 0;
+let pumpDiagDone = false;
 async function pumpOutbox() {
   pumpTicks += 1;
   if (pumpTicks % 30 === 1) dbg({ outbox: "tick", ticks: pumpTicks, ready: !!hitl, draining });
   if (draining || !hitl) return;
+  if (!pumpDiagDone) {
+    pumpDiagDone = true;
+    let probe = null, probeFile = null;
+    try { probeFile = hitl.STATE_FILE ?? null; probe = (hitl.loadState()?.outbox ?? []).length; }
+    catch (error) { probe = "error:" + String(error); }
+    dbg({ hitl: "pump-ready", stateDir: (() => { try { return hitl.PATHS?.stateDir ?? null; } catch { return "n/a"; } })(),
+      stateFile: probeFile, outboxLen: probe,
+      envState: process.env.DSH_WECHAT_HITL_STATE ?? null,
+      cwd: (() => { try { return process.cwd(); } catch { return "n/a"; } })() });
+  }
   draining = true;
   try {
     const queueLength = (hitl.loadState().outbox ?? []).length;
@@ -339,7 +350,11 @@ export default definePluginEntry({
     const PUMP_START_DELAY_MS = 45000;
     setInterval(() => { pumpOutbox().catch(() => {}); }, OUTBOX_POLL_MS);
     setTimeout(() => { pumpOutbox().catch(() => {}); }, PUMP_START_DELAY_MS);
-    dbg({ boot: "dsh-bridge 0.4.0", outboxPollMs: OUTBOX_POLL_MS, pumpStartDelayMs: 45000 });
+    dbg({ boot: "dsh-bridge 0.4.0", outboxPollMs: OUTBOX_POLL_MS, pumpStartDelayMs: 45000,
+      // 诊断：泵读的到底是哪个 state 文件（路径错位时会静默空转，必须留痕）
+      hitlStateDir: (() => { try { return hitl?.PATHS?.stateDir ?? null; } catch { return "n/a"; } })(),
+      hitlStateFile: (() => { try { return hitl?.STATE_FILE ?? null; } catch { return "n/a"; } })(),
+      hitlOutboxAtBoot: (() => { try { return (hitl?.loadState()?.outbox ?? []).length; } catch (error) { return "error:" + String(error); } })() });
 
     api.on("before_agent_reply", async (event, ctx) => {
       const text = String(event?.cleanedBody ?? event?.body ?? "").trim();

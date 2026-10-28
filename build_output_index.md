@@ -1,7 +1,7 @@
 ---
 title: dsh-wechat-hitl 成果物索引
 date created: 2026-10-26
-date modified: 2026-10-26
+date modified: 2026-10-28
 tags:
   - build-output-index
   - wechat-hitl
@@ -13,6 +13,7 @@ tags:
 
 | 成果物 | 背景与要求摘要 |
 |---|---|
+| `MOVE-20261028-迁入DSH工作区.md` | 2026-10-28 从 logseq 库迁入 DSH 工作区的记录：改动清单、junction 兼容层与删除条件、验证证据、限制 | 2026-10-28 |
 | @@B@@PLAN-wechat-hitl.md@@B@@ | 方案与决策主文档：关键问题 1–6 的源码级答复、5 条路线对比 + 风险矩阵、推荐架构、验证证据、限制与下一步 |
 | @@B@@lib/hitl-store.js@@B@@ | 三端共享状态层：请求表、答复解析（编号/关键词/自由文本/歧义）、微信文案、发件箱、headless 续跑、NDJSON 解析 |
 | @@B@@pkg/dsh-wechat-hitl/@@B@@ | DSH Cordis 插件包（index.js / package.json / cordis.patch.yml）：turn/end 推送、ask_user_question 推送、approval/request 阻塞式批准、答复注入 |

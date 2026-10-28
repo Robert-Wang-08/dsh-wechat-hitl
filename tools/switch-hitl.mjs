@@ -9,6 +9,10 @@
  *   node switch-hitl.mjs --state paused --soft      # 不碰 patch，只改开关文件
  *   node switch-hitl.mjs --show                     # 只打印当前状态
  *
+ * 目标 patch 路径：DSH_HOME 优先，缺省 ~/.dsh；目标 profile 用 --profiles 覆盖
+ *   node switch-hitl.mjs --state running --profiles web,headless,packed
+ * （换设备只改环境，不改代码）
+ *
  * 为什么两套：
  *   - 软开关（control.json）立即生效、无需重启，但只对**已加载新代码**的进程有效
  *     （Cordis 的 patchReload=live 只重放 patch，不重载模块缓存）。
@@ -16,15 +20,23 @@
  *     对「宿主要是跑着旧模块代码」这种情况是唯一可靠的停法，同时顺带刷新模块缓存。
  */
 import { readFileSync, writeFileSync, copyFileSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { setControl, getControl, describeControl, CONTROL_STATES } from "../lib/hitl-store.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const PATCHES = [
-  "C:/Users/wwm_1/.dsh/profiles/web/cordis.patch.yml",
-  "C:/Users/wwm_1/.dsh/profiles/headless/cordis.patch.yml",
-];
+/**
+ * 目标 patch 路径不写死本机用户名：DSH_HOME 优先（与宿主同口径），否则 ~/.dsh。
+ * 目标 profile 可用 --profiles web,headless 覆盖，默认沿用本机实际挂载的两份。
+ */
+function resolvePatches(profileArg) {
+  const dshHome = process.env.DSH_HOME && process.env.DSH_HOME.trim() ? process.env.DSH_HOME.trim() : join(homedir(), ".dsh");
+  const names = (profileArg && String(profileArg).trim() ? String(profileArg).split(",") : ["web", "headless"])
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return names.map((name) => join(dshHome, "profiles", name, "cordis.patch.yml"));
+}
 const BEGIN = "# >>> dsh-wechat-hitl BEGIN（由 tools/switch-hitl.mjs 管理，勿手改）";
 const END = "# <<< dsh-wechat-hitl END";
 
@@ -99,6 +111,7 @@ function rewritePatch(path, mount) {
 }
 
 const args = parseArgs(process.argv.slice(2));
+const PATCHES = resolvePatches(args.profiles);
 
 if (args.show || !args.state) {
   const control = getControl();

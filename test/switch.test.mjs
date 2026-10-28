@@ -1,7 +1,7 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
-process.env.DSH_WECHAT_HITL_STATE = process.env.DSH_WECHAT_HITL_STATE || "D:/nutstore/1.logseq/70-WorkSpace/wechat-hitl-20261026/state-test";
+process.env.DSH_WECHAT_HITL_STATE = process.env.DSH_WECHAT_HITL_STATE || "D:/src/dsh/dsh-wechat-hitl/state-test";
 
 const store = await import("../lib/hitl-store.js");
 const { apply } = await import("../pkg/dsh-wechat-hitl/index.js");

@@ -5,7 +5,7 @@
 param(
   [string]$WeixinLog = "$env:TEMP\openclaw\openclaw-$(Get-Date -Format 'yyyy-MM-dd').log"
 )
-$state = 'D:\nutstore\1.logseq\70-WorkSpace\wechat-hitl-20261026\state'
+$state = 'D:\src\dsh\dsh-wechat-hitl\state'
 $dbg   = 'C:\Users\wwm_1\.openclaw\state\dsh-bridge-debug.log'
 $ext   = 'C:\Users\wwm_1\.openclaw\extensions\openclaw-weixin'
 $ok = 0; $bad = 0
@@ -23,7 +23,7 @@ foreach ($f in @("$ext\src\monitor\monitor.ts", "$ext\dist\src\monitor\monitor.j
   if ($m -ge 1 -and $d -ge 1 -and $LASTEXITCODE -eq 0) { Pass ("$(Split-Path $f -Leaf): marker=$m inbound-dropped=$d node-check=0") }
   else { Fail ("$(Split-Path $f -Leaf): marker=$m inbound-dropped=$d node-check=$LASTEXITCODE") }
 }
-$store = 'D:\nutstore\1.logseq\70-WorkSpace\wechat-hitl-20261026\lib\hitl-store.js'
+$store = 'D:\src\dsh\dsh-wechat-hitl\lib\hitl-store.js'
 $s = (Select-String -Path $store -Pattern 'inproc-egress-v2' -SimpleMatch).Count
 if ($s -ge 1) { Pass "hitl-store.js 含进程内出站实现（inproc-egress-v2）" } else { Fail "hitl-store.js 未含进程内出站实现" }
 

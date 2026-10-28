@@ -15,8 +15,8 @@ param(
 )
 $ErrorActionPreference = 'Continue'
 $stateDir = 'C:\Users\wwm_1\.openclaw\state'
-$logFile = 'D:\nutstore\1.logseq\70-WorkSpace\wechat-hitl-20261026\state\gateway.log'
-$toolsDir = 'D:\nutstore\1.logseq\70-WorkSpace\wechat-hitl-20261026\tools'
+$logFile = 'D:\src\dsh\dsh-wechat-hitl\state\gateway.log'
+$toolsDir = 'D:\src\dsh\dsh-wechat-hitl\tools'
 
 # 特征串用变量拼接：避免本脚本自身的命令行被误匹配后把自己杀掉
 $a = 'openclaw'
@@ -74,7 +74,7 @@ $startupBody = @'
 @echo off
 rem 登录自启：先重新注入 openclaw-weixin 入站游标补丁（幂等），再起网关。
 rem 官方包升级会覆盖 dist/src 下的 monitor，所以这一步不能省。
-pwsh -NoProfile -WindowStyle Hidden -File "D:\nutstore\1.logseq\70-WorkSpace\wechat-hitl-20261026\tools\apply-weixin-inbound-fix.ps1"
+pwsh -NoProfile -WindowStyle Hidden -File "D:\src\dsh\dsh-wechat-hitl\tools\apply-weixin-inbound-fix.ps1"
 start "" /min "C:\openclaw-runtime\openclaw.cmd" gateway run
 '@
 try {

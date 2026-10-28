@@ -25,7 +25,7 @@ import process from "node:process";
 const MARKER = "inproc-egress-v1";
 const NODE_BIN = process.env.OPENCLAW_NODE ?? "C:\\openclaw-runtime\\node.exe";
 const BRIDGE = "C:\\openclaw-runtime\\plugins\\dsh-bridge\\index.js";
-const STORE = "D:\\nutstore\\1.logseq\\70-WorkSpace\\wechat-hitl-20261026\\lib\\hitl-store.js";
+const STORE = "D:\\src\\dsh\\dsh-wechat-hitl\\lib\\hitl-store.js";
 const check = process.argv.includes("--check");
 
 const BRIDGE_CONST_ANCHOR = "const OUTBOX_POLL_MS = 2000;";

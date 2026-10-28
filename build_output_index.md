@@ -1,5 +1,5 @@
 ---
-title: wechat-hitl-20261026 成果物索引
+title: dsh-wechat-hitl 成果物索引
 date created: 2026-10-26
 date modified: 2026-10-26
 tags:
@@ -7,7 +7,7 @@ tags:
   - wechat-hitl
 ---
 
-# wechat-hitl-20261026 成果物索引
+# dsh-wechat-hitl 成果物索引
 
 微信主动推送 + 人工确认回环（DSH ↔ WeChat）的全部过程产物。
 

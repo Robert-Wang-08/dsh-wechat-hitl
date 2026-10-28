@@ -27,10 +27,10 @@ tags:
 
 - 扩展目录：`C:\Users\wwm_1\.openclaw\extensions\openclaw-weixin`（官方包 `@tencent-weixin/openclaw-weixin@2.4.10`，Tencent 发布）
 - 轮询循环：`src/monitor/monitor.ts`，第 89–210 行；重试常量在第 14–16 行（3 次失败 / 30s 退避 / 2s 重试）
-- 状态目录：`D:\nutstore\1.logseq\70-WorkSpace\wechat-hitl-20261026\state`
+- 状态目录：`D:\src\dsh\dsh-wechat-hitl\state`
 - 桥接插件：`C:\openclaw-runtime\plugins\dsh-bridge\index.js`
-- 共享模块：`D:\nutstore\1.logseq\70-WorkSpace\wechat-hitl-20261026\lib\hitl-store.js`（`pushWechat` / `drainOutbox`）
-- 网关端口 18789；重启脚本 `...\wechat-hitl-20261026\tools\restart-gateway.ps1`
+- 共享模块：`D:\src\dsh\dsh-wechat-hitl\lib\hitl-store.js`（`pushWechat` / `drainOutbox`）
+- 网关端口 18789；重启脚本 `...\dsh-wechat-hitl\tools\restart-gateway.ps1`
 - 日志：网关 `...\state\gateway.log`；openclaw 主日志 `C:\Users\wwm_1\AppData\Local\Temp\openclaw\openclaw-<date>.log`；桥接 `C:\Users\wwm_1\.openclaw\state\dsh-bridge-debug.log`；HITL `...\state\hitl.log`
 
 ## 任务 A：修复入站丢消息（必做）

@@ -3,7 +3,7 @@
  * wx-hitl.mjs — DSH 侧命令行：把「需要人工确认」或「会话结果」主动推到微信，并支持回环验证。
  *
  * 用法（在任意 DSH 会话的 bash/pwsh 里都可跑）：
- *   node D:\nutstore\1.logseq\70-WorkSpace\wechat-hitl-20261026\bin\wx-hitl.mjs notify --text "任务完成：xxx"
+ *   node D:\src\dsh\dsh-wechat-hitl\bin\wx-hitl.mjs notify --text "任务完成：xxx"
  *   node ...\wx-hitl.mjs ask --question "是否允许删除 _INBOX/tmp？" --options "允许|拒绝" --title "删除文件"
  *   node ...\wx-hitl.mjs status
  *   node ...\wx-hitl.mjs resolve --id req-xxxx --answer 1        # 不用微信也能模拟答复

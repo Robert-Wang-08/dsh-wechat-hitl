@@ -78,13 +78,13 @@ tags:
 DSH 沙箱只允许写工作区；`Get-CimInstance`、`Set-Content .openclaw\state`、WMI `Win32_Process.Create`、explorer 拉起均被拒，所以重启只能由你执行：
 
 ```powershell
-pwsh -NoProfile -File "D:\nutstore\1.logseq\70-WorkSpace\wechat-hitl-20261026\tools\restart-gateway.ps1" -TimeoutSeconds 240
+pwsh -NoProfile -File "D:\src\dsh\dsh-wechat-hitl\tools\restart-gateway.ps1" -TimeoutSeconds 240
 ```
 
 跑完自查：
 ```powershell
 netstat -ano | Select-String ':18789.*LISTENING'          # pid 应不再是 36892
-Get-Content D:\nutstore\1.logseq\70-WorkSpace\wechat-hitl-20261026\state\gateway.log -Tail 20
+Get-Content D:\src\dsh\dsh-wechat-hitl\state\gateway.log -Tail 20
 Select-String 'C:\Users\wwm_1\.openclaw\state\dsh-bridge-debug.log' -Pattern 'egress|inproc' | Select-Object -Last 5
-Select-String D:\nutstore\1.logseq\70-WorkSpace\wechat-hitl-20261026\state\hitl.log -Pattern 'inproc-egress|outbox-egress' | Select-Object -Last 5
+Select-String D:\src\dsh\dsh-wechat-hitl\state\hitl.log -Pattern 'inproc-egress|outbox-egress' | Select-Object -Last 5
 ```

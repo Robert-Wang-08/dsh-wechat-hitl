@@ -29,7 +29,7 @@ asset-id: wechat-hitl
 ## 命令行（本机路径固定）
 
 ```text
-$cli = 'D:\nutstore\1.logseq\70-WorkSpace\wechat-hitl-20261026\bin\wx-hitl.mjs'
+$cli = 'D:\src\dsh\dsh-wechat-hitl\bin\wx-hitl.mjs'
 
 node $cli ask --title "删除确认" --question "要删 _INBOX/tmp 吗？" --options "允许|拒绝" --ttl-min 30
 node $cli notify --title "构建完成" --text "3 个包已发布"
@@ -69,7 +69,7 @@ node $cli switch --state running|paused|stopped
    插件日志 C:/Users/<USER>/AppData/Local/Temp/openclaw/openclaw-<date>.log 搜 contextToken。
    根因：微信 bot 主动发消息依赖 contextToken（由用户最近一次入站消息刷新）。让用户在微信给 bot 发一句话即可，不要重新扫码。
    自愈：缺 token 的消息不丢弃（标记 needsContext 保留 24h），用户下一次入站时自动补发。
-3. 网关异常：pwsh -File 70-WorkSpace/wechat-hitl-20261026/tools/restart-gateway.ps1 200（会清理强杀残留的 openclaw.sqlite.cron-authority.lock）。
+3. 网关异常：pwsh -File dsh-wechat-hitl/tools/restart-gateway.ps1 200（会清理强杀残留的 openclaw.sqlite.cron-authority.lock）。
 4. 改了插件代码必须重启对应进程：DSH 侧插件在 Web 宿主是模块缓存，patchReload: live 不重载模块 → 需重启 DSH Web。
 
 ## 三态开关
@@ -82,8 +82,8 @@ node $cli switch --state running|paused|stopped
 
 ## 关键路径
 
-- 状态与审计：70-WorkSpace/wechat-hitl-20261026/state/{pending.json,control.json,sessions.json,hitl.log}
+- 状态与审计：dsh-wechat-hitl/state/{pending.json,control.json,sessions.json,hitl.log}
 - 共享模块：lib/hitl-store.js（插件 / 网关 / CLI 三端唯一实现）
 - 网关插件：C:/openclaw-runtime/plugins/dsh-bridge/index.js
 - DSH 插件：~/.dsh/profiles/{web,headless}/node_modules/dsh-wechat-hitl/
-- 方案与 runbook：70-WorkSpace/wechat-hitl-20261026/PLAN-wechat-hitl.md、70-WorkSpace/微信主动推送与人工确认回环说明.md
+- 方案与 runbook：dsh-wechat-hitl/PLAN-wechat-hitl.md、70-WorkSpace/微信主动推送与人工确认回环说明.md

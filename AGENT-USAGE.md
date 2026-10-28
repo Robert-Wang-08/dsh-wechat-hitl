@@ -29,10 +29,10 @@ tags:
 本次任务请与我的微信对接，约定如下（工具已在本机装好，不要再自己拼 openclaw 命令）：
 
 A. 阶段性/最终结果推送（单向，不用等回复）：
-   node D:\nutstore\1.logseq\70-WorkSpace\wechat-hitl-20261026\bin\wx-hitl.mjs notify --title "一句话主题" --text "结果摘要，900 字以内"
+   node D:\src\dsh\dsh-wechat-hitl\bin\wx-hitl.mjs notify --title "一句话主题" --text "结果摘要，900 字以内"
 
 B. 需要我拍板时（双向，我的微信回复会让本会话继续）：
-   node D:\nutstore\1.logseq\70-WorkSpace\wechat-hitl-20261026\bin\wx-hitl.mjs ask --title "主题" --question "问题" --options "选项A|选项B"
+   node D:\src\dsh\dsh-wechat-hitl\bin\wx-hitl.mjs ask --title "主题" --question "问题" --options "选项A|选项B"
    发出后**立即结束本回合**，不要 sleep/轮询等待——我的答复会作为新一回合注入本会话。
 
 C. 注意：
@@ -76,7 +76,7 @@ C. 注意：
 ## 5. 自检命令
 
 `"`@T`"`
-cd D:\nutstore\1.logseq\70-WorkSpace\wechat-hitl-20261026
+cd D:\src\dsh\dsh-wechat-hitl
 node bin\wx-hitl.mjs status          # 开关 + 队列 + 待确认（含识别码）
 node bin\wx-hitl.mjs notify --text "自检"   # 单向推送自检
 node tools\switch-hitl.mjs --show    # 三态开关与挂载状态

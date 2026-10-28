@@ -17,7 +17,8 @@
  *
  * 本插件不改 DSH 本体，不依赖第三方包，所有跨进程状态走共享状态文件（hitl-store.js）。
  */
-const STORE_URL = new URL("file:///D:/nutstore/1.logseq/70-WorkSpace/wechat-hitl-20261026/lib/hitl-store.js");
+// 共享状态层唯一实现位于 DSH 工作区；整目录再搬家时只需改这一行，或用 DSH_WECHAT_HITL_LIB 覆盖。
+const STORE_URL = new URL(process.env.DSH_WECHAT_HITL_LIB || "file:///D:/src/dsh/dsh-wechat-hitl/lib/hitl-store.js");
 
 export const name = "wechat-hitl";
 

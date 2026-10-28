@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "receipt_id": "receipt-hitl-handle",
+  "task_id": "task-20261026T012723728533Z-63e3e3240c58",
+  "subtask_id": "subtask-20261026T024349880662Z-304c20dddc00",
+  "route": "controller-codex",
+  "executor": "dsh-main(controller)",
+  "model": "opencode-go/deepseek-v4.1-flash",
+  "outcome": "completed",
+  "summary": "微信识别码从 4 位 hex 改为 1–2 位纯数字 handle：首行行首显示、单调递增分配避串号；单请求无需码，多请求码+选项连写（认连写/空格/短横/全角/括号）；只回码时回提示；旧 hex 仍兼容；25/25 单测。",
+  "files_changed": [
+    "70-WorkSpace/wechat-hitl-20261026/lib/hitl-store.js",
+    "70-WorkSpace/wechat-hitl-20261026/gateway/dsh-bridge-index-v0.4.0.js",
+    "70-WorkSpace/wechat-hitl-20261026/bin/wx-hitl.mjs",
+    "70-WorkSpace/wechat-hitl-20261026/test/switch.test.mjs",
+    "70-WorkSpace/wechat-hitl-20261026/test/hitl-store.test.mjs",
+    "70-WorkSpace/微信主动推送与人工确认回环说明.md",
+    "70-WorkSpace/wechat-hitl-20261026/PLAN-wechat-hitl.md"
+  ],
+  "validation": [
+    "25/25 单测通过（新增 5 条识别码：分配唯一性、码+选项四种写法、括号剥离、need-option、多请求不猜）",
+    "实测渲染：单请求提示「回 1 或 2」；多请求提示「回 21 = 码2选1」",
+    "实测解析：1 / 11 / 【1】2 / 21 / 2 稍后 结果均符合预期",
+    "真实推送一条新格式消息到手机（handle=1，单请求无需码）",
+    "网关已重启加载 need-option 回话分支（HTTP 200）"
+  ],
+  "risks": [
+    "Web 宿主仍跑旧模块实例，其自动推送的文案要等 DSH Web 重启后才变新格式；CLI 发起的推送已是新格式",
+    "handle 上限 99，超出后回绕复用（当前场景不可能触及）"
+  ]
+}

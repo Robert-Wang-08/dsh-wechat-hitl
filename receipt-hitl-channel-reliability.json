@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "receipt_id": "receipt-hitl-channel-reliability",
+  "task_id": "task-20261026T012723728533Z-63e3e3240c58",
+  "subtask_id": "subtask-20261026T064709753598Z-8004b6887fa8",
+  "route": "controller-codex",
+  "executor": "dsh-main(controller)",
+  "model": "opencode-deepseek-v4.1-flash-placeholder",
+  "outcome": "completed",
+  "summary": "定位主动推送全线失败的根因（微信 bot 缺 contextToken 导致 prepare failed，非登录失效），记录排障顺序；修复出站队列 claimedAt 永久认领导致的一次失败永久卡死（改 3 分钟租约）；出站泵启动延迟 1.5s→45s 避免与通道初始化抢资源；清理配置里 acpx 残留 agent 条目。",
+  "files_changed": [
+    "70-WorkSpace/wechat-hitl-20261026/lib/hitl-store.js",
+    "70-WorkSpace/wechat-hitl-20261026/gateway/dsh-bridge-index-v0.4.0.js",
+    "70-WorkSpace/wechat-hitl-20261026/AGENT-USAGE.md",
+    "70-WorkSpace/微信主动推送与人工确认回环说明.md",
+    "70-WorkSpace/wechat-hitl-20261026/PLAN-wechat-hitl.md"
+  ],
+  "validation": [
+    "通道自检实发成功：Message ID openclaw-weixin:1792996830149-09f8d1a9（用户确认微信收到）",
+    "真实闭环：13:41:57 用户手机回 1 -> delivered:injected -> 演示会话续跑（session 文件 14:45:30 更新）-> 14:45:08 结果回推微信",
+    "26/26 单测通过；网关 HTTP 200；switch=running",
+    "插件日志取证：contextToken missing / prepare failed；修复后无该错误"
+  ],
+  "risks": [
+    "主动推送依赖最近入站消息产生的 contextToken；长时间静默需用户先发一句话（已写入文档）",
+    "扫码登录在本机两次因二维码过期失败，属误判路径，已在文档中降级为排查顺序的最后一步"
+  ]
+}

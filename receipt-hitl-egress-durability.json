@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0",
+  "receipt_id": "receipt-hitl-egress-durability",
+  "task_id": null,
+  "subtask_id": null,
+  "route": "direct-controller(no-subagent)",
+  "executor": "dsh-main(controller)",
+  "model": "ais-2dsglm/deepseek-v4.1-flash",
+  "outcome": "completed",
+  "summary": "修复发件箱条目静默丢失：mutate() 增加跨进程独占锁（含 15s 残留锁抢占、5s 超时降级写并审计 state-lock-timeout）；pushWechat() 网关探活改为异步，入队即返回 queued，消除 gateway-probe-timeout 误报；drainOutbox() 增加 outbox-reclaim 留痕。测试入口改为逐文件 node 执行（node --test 在 DSH 沙箱 spawn EPIPE/EPERM）。新增 3 条回归单测。",
+  "files_changed": [
+    "70-WorkSpace/wechat-hitl-20261026/lib/hitl-store.js",
+    "70-WorkSpace/wechat-hitl-20261026/test/lock.test.mjs",
+    "70-WorkSpace/wechat-hitl-20261026/test/run-tests.ps1",
+    "70-WorkSpace/wechat-hitl-20261026/PLAN-wechat-hitl.md",
+    "70-WorkSpace/wechat-hitl-20261026/build_output_index.md"
+  ],
+  "validation": [
+    "32/32 单测通过：hitl-store 9 + plugin 5 + switch 15 + lock 3（test/run-tests.ps1，隔离 state-test，exit=0）",
+    "lock.test 三进程并发各推 5 条：outbox 恰好 15 条、id 无重复、锁文件已释放",
+    "lock.test 残留锁模拟：写入 60s 前 mtime 的 pending.json.lock，可被抢占且写入成功、耗时 < 3s",
+    "lock.test 探活不阻塞：pushWechat output=queued、gatewayUp=null、耗时 < 1.5s",
+    "故障取证：hitl.log 中 out-1792996945520-4f5afe 仅有 push-queued(gatewayUp=false)，无 outbox-sent / outbox-failed",
+    "清理：临时诊断文件 state/_diag-cr.cjs、state/_snapshot-hitl-store-1500.js 已删除"
+  ],
+  "risks": [
+    "已消除（重启后）：两侧进程均加载新代码，丢更新窗口关闭",
+    "拿不到锁 5s 后降级为无锁写入（记 state-lock-timeout），极端并发下仍可能丢更新，属有意取舍",
+    "TTL 丢弃已审计（outbox-dropped），该风险关闭"
+  ],
+  "deployed_at": "2026-10-27T00:25:14Z(DSH 宿主，plugin-loaded pid=42836) / 2026-10-27T01:25:27Z(网关)",
+  "acceptance": [
+    "DSH 宿主重启：hitl.log 2026-10-26T16:25:14Z plugin-loaded pid=42836，新代码已加载",
+    "网关自救：23:42:41 网关退出、端口 18789 不可达；根因是 ~/.openclaw/state/openclaw.sqlite.cron-authority.lock 内已死 pid 42032 卡住 gateway-run-bootstrap；tools/restart-gateway.ps1 清理后 gateway UP after ~60s: HTTP 200",
+    "丢消息回归（关键）：连推 3 条后立即 Stop-Process 杀网关 → pending.json 仍 queued=3（零丢失）→ 重启后 outbox-sent 280ce7 / 66054b / outbox-reclaim 670d87 → outbox-sent 670d87；queued=0，sent 84→87，failed 不变",
+    "被杀死进程认领的条目由租约到期后 outbox-reclaim 重新认领并补发，即旧实现「静默消失」场景已被覆盖",
+    "state/ 全程无残留 pending.json.lock；32/32 单测复跑全绿",
+    "TTL 丢弃留痕（2026-10-27 01:59 生产实测）：注入 31 分钟前的 out-ttl-prod-ca7baa → outbox-dropped reason=ttl ageMs=1953028 ttlMs=1800000，队列随即归零；drainOutbox 返回值新增 dropped 计数；单测扩到 33/33",
+    "Markdown 泄漏修复（2026-10-27）：出口 outboxTag/toWechatText 清洗 + formatTurnEnd 先清洗再截行；单测 35/35；验收样本 out-1793066784883-301b08 于 02:07:51 outbox-sent",
+    "Markdown 漏点二修复（2026-10-27）：formatTurnEnd 的全角缩进 U+3000 使 ^ 锚定清洗失效；四处行首判定改为容忍 [ \\t　]*，全量单测 36/36；验收样本 out-1793070033006-04ffef 入队后因 contextToken 过期进入 outbox-wait-context 等待",
+    "Markdown 漏点三（扁平化/CJK 缩进）修复（2026-10-27）：行内标题换行还原 + 分隔单元格整段删除 + 残留竖线转全角；样本 out-1793072013225-601e64 的 outbox-send 审计显示 payload 已为 ■/全角竖线，03:36:53 outbox-sent",
+    "用户端确认（2026-10-27）：会话码 99 样本（out-1793070033006-04ffef）微信渲染为 ■ 一、srs处理 / 全角竖线表格 / ・列表 / ─────────，无 ## 与 |，全角缩进漏点确认修复",
+    "微信版式规范（2026-10-27）：formatTurnEnd 重写——单 \\n 分行、禁行首缩进、宽度 ≤34（≈17 汉字）、分隔线 12 个 ─、表格改分段打包；新增 wrapCjk/packSegments 与版式单测，hitl-store 14/14",
+    "ISSUE-001 修复（2026-10-27）：outboxEntryDisposition 统一判定，needsContext 豁免 30 分钟 TTL 改由 24h 窗口管，60s 重试节流，丢弃原因区分 ttl/context-expired；单测 15/15；生产验证 31 分钟等待态条目 90 秒后仍在队列且无 drop 记录"
+  ],
+  "followups": [
+    "已修：入队日志被 process.exit 丢弃 → pushWechat 同步写 push-queued，探活另写 push-probe（17:32:53 push-queued → 17:33:32 outbox-sent 验证）；push-probe 仅长驻调用方可见",
+    "未修：drainOutbox 对超过 30 分钟 TTL 的条目静默移除、日志无痕；本次 00:37/00:39 两条即被 TTL 丢弃，建议补 dropped 审计",
+    "未查：~/.openclaw/state 下累积 15+ 个 *.lock.stale-*，说明网关启动失败反复发生，建议查锁回收根因",
+    "已修：TTL 丢弃曾在日志里无痕（见 acceptance 末条）",
+    "待办：DSH 宿主未重启，formatTurnEnd 的「先清洗再截行」尚未在宿主生效（不影响 Markdown 去除）",
+    "测试抖动未根除：switch.test 共用单例 + 真实计时器，全量偶尔挂 1–2 条、单跑恒绿；已加 beforeEach 与逐文件清空，根因修复需改测试设计"
+  ]
+}

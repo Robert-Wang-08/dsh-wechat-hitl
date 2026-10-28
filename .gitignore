@@ -1,0 +1,11 @@
+state/
+state-test/
+node_modules/
+*.log
+.write-probe.tmp
+.ptc/
+state/
+state-test/
+state/verify/
+*.bak-*
+*.log

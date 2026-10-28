@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "receipt_id": "receipt-hitl-session-code",
+  "task_id": "task-20261026T012723728533Z-63e3e3240c58",
+  "subtask_id": "subtask-20261026T070956405527Z-",
+  "route": "controller-codex",
+  "executor": "dsh-main(controller)",
+  "model": "opencode-go-runner/deepseek-v4.1-flash",
+  "outcome": "completed",
+  "summary": "新增稳定「会话码」：sessions.json 持久登记 sessionId->1..99 码；所有推送抬头带会话码（需要确认/回合结束/会话表列）；回复语法改为「码 + 内容」（3 1 = 会话码3选1；3 指令 = 转发进会话码3；3 = 看该会话状态；未知码回清单）。保留无码时的原有兼容路径。",
+  "files_changed": [
+    "70-WorkSpace/wechat-hitl-20261026/lib/hitl-store.js",
+    "70-WorkSpace/wechat-hitl-20261026/gateway/dsh-bridge-index-v0.4.0.js",
+    "70-WorkSpace/wechat-hitl-20261026/test/switch.test.mjs"
+  ],
+  "validation": [
+    "全量单测通过（tests exit=0，含 lock.test.mjs 3 条并发写锁用例）",
+    "渲染实测：抬头【需要确认】会话码 1 · 识别码 1；回复提示带码",
+    "会话清单渲染为带「会话码」列的字符表格（8 个会话已分配 1..8）",
+    "注册表落盘 state/sessions.json，码稳定不随排序变化",
+    "网关重启加载路由（HTTP 200）"
+  ],
+  "risks": [
+    "有码路由优先于原有无码逻辑，用户若忘带码会走兼容路径（可能触发单请求自由文本答复）",
+    "码上限 99，超出后按空位复用"
+  ]
+}

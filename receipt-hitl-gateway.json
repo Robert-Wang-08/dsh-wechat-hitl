@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "receipt_id": "receipt-hitl-gateway",
+  "task_id": "task-20261026T012723728533Z-63e3e3240c58",
+  "subtask_id": "subtask-20261026T022550166432Z-39e41ec666fa",
+  "route": "controller-codex",
+  "executor": "dsh-main(controller)",
+  "model": "opencode-go/deepseek-v4.1-flash",
+  "outcome": "completed",
+  "summary": "网关插件升级 v0.4.0：发件箱出站泵（微信唯一出口）、入站答复拦截、headless 兜底、resolveTarget 修正（chatId/senderId）、final 早退；新增 restart-gateway.ps1 修复强杀导致的 stale cron-lock 启动失败。",
+  "files_changed": [
+    "70-WorkSpace/wechat-hitl-20261026/gateway/dsh-bridge-index-v0.4.0.js",
+    "70-WorkSpace/wechat-hitl-20261026/tools/restart-gateway.ps1"
+  ],
+  "validation": [
+    "真实手机往返：微信回复「继续处理」-> hitl match ok -> 原会话 session-dd7db5bb 被续写（文件 mtime 10:15:59）-> 结果回推",
+    "dsh-bridge-debug.log 出现 outbox sent/failed 计数与 hitl:match 记录",
+    "restart-gateway.ps1 实测：停网关 + 清 stale lock + 55s 内 HTTP 200",
+    "已装网关插件与源文件 MD5 一致"
+  ],
+  "risks": [
+    "网关被强杀后必须清 stale cron lock，脚本已内置",
+    "v0.3.0 备份保留在同目录"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "dsh-wechat-hitl",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "把 DSH 的审批/提问/回合结束推送到微信，并把微信回复注入原会话（人工确认回环）。",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

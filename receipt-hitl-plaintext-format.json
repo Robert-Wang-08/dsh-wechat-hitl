@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "receipt_id": "receipt-hitl-plaintext-format",
+  "task_id": "task-20261026T012723728533Z-63e3e3240c58",
+  "subtask_id": "subtask-20261026T070513028869Z-618",
+  "route": "controller-codex",
+  "executor": "dsh-main(controller)",
+  "model": "opencode-go-runner/deepseek-v4.1-flash",
+  "outcome": "completed",
+  "summary": "微信推送文案改为纯文本：去 Markdown（无 **/#/>/围栏），层级用全角缩进多层列表，识别码用【需要确认】识别码 N 标题行；回合结束改用 formatTurnEnd 键值块；会话清单改用字符绘制表格 drawTable（CJK 宽度对齐）。顺带修 markAnswered 未记录原始回复 raw。",
+  "files_changed": [
+    "70-WorkSpace/wechat-hitl-20261026/lib/hitl-store.js",
+    "70-WorkSpace/wechat-hitl-20261026/pkg/dsh-wechat-hitl/index.js",
+    "70-WorkSpace/wechat-hitl-20261026/gateway/dsh-bridge-index-v0.4.0.js",
+    "70-WorkSpace/微信主动推送与人工确认回环说明.md",
+    "70-WorkSpace/wechat-hitl-20261026/test/*.mjs"
+  ],
+  "validation": [
+    "32/32 单测通过（新增断言：首行含识别码、无 Markdown 行首标记、会话表用 │ 分隔）",
+    "渲染实测：单请求/多请求/只回码提示均为纯文本多层列表",
+    "会话清单渲染为 ┌┬┐├┼┤└┴┘ 字符表格，CJK 宽度正确对齐",
+    "网关已重启加载新文案（HTTP 200）"
+  ],
+  "risks": [
+    "单请求时自由文本仍会被当作答复（原有设计），可能吞掉一条无关消息；需要时用 /a 或尽快答复",
+    "Web 宿主内旧模块的回合结束文案要等 DSH Web 重启才变成新格式；CLI/网关路径已是新格式"
+  ]
+}

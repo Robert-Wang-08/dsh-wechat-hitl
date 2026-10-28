@@ -1,0 +1,19 @@
+# dsh-wechat-hitl bundle patch：把微信人工确认回环插件挂到宿主。
+# 只有 insert（新增），不覆盖任何 DSH 原有条目。
+- insert:
+    - id: wechat-hitl
+      name: dsh-wechat-hitl
+      config:
+        enabled: true
+        # 2026-10-27：回合结束推送改为“运行时开关”控制（微信发「推送 关」即停，无需重启），
+        # 因此这里恢复为 true，由 resultPush 决定是否真的推。
+        notifyOnTurnEnd: true
+        minTurnMs: 3000
+        pollMs: 1500
+        approval:
+          enabled: true
+          # 2026-10-27：5 分钟窗口太短，人回来时请求已过期（实测 11:25 发起、11:55 才发现）。
+          # 调到 15 分钟；请求 TTL 仍为 30 分钟，大于审批窗口，不会被 TTL 抢先掐断。
+          timeoutMs: 900000
+          options: ["允许一次", "拒绝"]
+        excludeSessionIdPrefixes: ["wx-"]

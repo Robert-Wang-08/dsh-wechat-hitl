@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "receipt_id": "receipt-hitl-list-v2",
+  "task_id": "task-20261026T012723728533Z-63e3e3240c58",
+  "subtask_id": "subtask-20261026T071532734473Z-253caef898f5",
+  "route": "controller-codex",
+  "executor": "dsh-main(controller)",
+  "model": "opencode-go-runner/deepseek-v4.1-flash",
+  "outcome": "completed",
+  "summary": "会话清单 v2：扫描所有工作区，显示 回复id/会话名/工作区/活跃；名称默认「工作区名·短id」可用 /name 自定义；每条推送末尾给出「回复格式：<回复id> <内容>」+示例；/l、/help、未知id 均返回同一清单与格式。",
+  "files_changed": [
+    "70-WorkSpace/wechat-hitl-20261026/lib/hitl-store.js",
+    "70-WorkSpace/wechat-hitl-20261026/gateway/dsh-bridge-index-v0.4.0.js",
+    "70-WorkSpace/wechat-hitl-20261026/test/switch.test.mjs"
+  ],
+  "validation": [
+    "全量单测 tests exit=0",
+    "清单渲染四列字符表格+回复格式说明",
+    "推送末尾带回复格式与示例",
+    "/name 已接入",
+    "网关重启 HTTP 200"
+  ],
+  "risks": [
+    "会话名默认由工作区目录名推导，分隔符可能与真实 cwd 略异",
+    "跨工作区一并列出"
+  ]
+}

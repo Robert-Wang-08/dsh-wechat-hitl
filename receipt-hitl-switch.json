@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "receipt_id": "receipt-hitl-switch",
+  "task_id": "task-20261026T012723728533Z-63e3e3240c58",
+  "subtask_id": "subtask-20261026T023646636302Z-cb4fc2220c75",
+  "route": "controller-codex",
+  "executor": "dsh-main(controller)",
+  "model": "opencode-go/deepseek-v4.1-flash",
+  "outcome": "completed",
+  "summary": "新增自动推送三态开关：软开关 control.json（所有发送前必读，paused 抑制推送、stopped 完全不介入）+ 硬开关 profile patch 的 BEGIN/END 标记块（stopped 摘挂载 / running 恢复，解决旧模块不认软开关的问题）；paused 下审批立即 next() 不阻塞回合；CLI 增加 on/pause/off/status 与 tools/switch-hitl.mjs、check-web-patch.mjs；单测扩到 20 条。",
+  "files_changed": [
+    "70-WorkSpace/wechat-hitl-20261026/lib/hitl-store.js",
+    "70-WorkSpace/wechat-hitl-20261026/pkg/dsh-wechat-hitl/index.js",
+    "70-WorkSpace/wechat-hitl-20261026/bin/wx-hitl.mjs",
+    "70-WorkSpace/wechat-hitl-20261026/tools/switch-hitl.mjs",
+    "70-WorkSpace/wechat-hitl-20261026/tools/check-web-patch.mjs",
+    "70-WorkSpace/wechat-hitl-20261026/test/switch.test.mjs",
+    "70-WorkSpace/wechat-hitl-20261026/test/run-tests.ps1",
+    "70-WorkSpace/微信主动推送与人工确认回环说明.md",
+    "70-WorkSpace/wechat-hitl-20261026/PLAN-wechat-hitl.md"
+  ],
+  "validation": [
+    "20/20 单测通过（新增 6 条开关门禁用例，--test-concurrency=1 串行隔离）",
+    "实测 paused：notify 返回 suppressed:paused 且 outbox 条数不变；ask 被拒且不留悬空请求",
+    "实测 stopped：drainOutbox 返回 skipped=stopped，积压保留不丢",
+    "硬开关实测：patch 块 absent(未挂载) ⇄ mounted/OK，块 YAML 解析通过",
+    "非 running 下审批实测 <2s 返回 unavailable（不阻塞回合）",
+    "Web 会话推送取证：turn-end-notify 命中本会话 session-4c0dcb1b 与两个真实会话"
+  ],
+  "risks": [
+    "卸载→重新挂载不刷新 ESM 模块缓存：Web 宿主上的软开关要等 DSH Web 重启才生效，在此之前用 stopped 硬开关",
+    "开关目前只有 CLI/脚本操作面，Web 面板（client 半）未做"
+  ]
+}

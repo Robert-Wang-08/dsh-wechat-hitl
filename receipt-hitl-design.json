@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "receipt_id": "receipt-hitl-design",
+  "task_id": "task-20261026T012723728533Z-63e3e3240c58",
+  "subtask_id": "subtask-20261026T022549737477Z-95597d5180c5",
+  "route": "controller-codex",
+  "executor": "dsh-main(controller)",
+  "model": "opencode-go/deepseek-v4.1-flash",
+  "outcome": "completed",
+  "summary": "完成关键问题 1-6 的源码级调研与 5 条路线对比（含 acpx 死路复核），产出 PLAN-wechat-hitl.md：推荐 A 路线（DSH Cordis 插件 + 网关唯一出口 + 共享状态文件），并给出风险矩阵与安全边界。",
+  "files_changed": [
+    "70-WorkSpace/wechat-hitl-20261026/PLAN-wechat-hitl.md"
+  ],
+  "validation": [
+    "关键问题 1/4 依据 dsh-notify-bell 与 dsh-agent-loop 源码",
+    "审批契约依据 dsh-user-approval types.d.ts（waterfall + 4 种 outcome）",
+    "会话写锁依据 dsh-session-persistence-jsonl README.zh.md",
+    ">=3 条路线（实际 5 条）+ 风险矩阵齐备"
+  ],
+  "risks": [
+    "公网文件链接仅给方案未实现",
+    "Tailscale 需先启动 tailscaled 才能评估 Funnel"
+  ]
+}

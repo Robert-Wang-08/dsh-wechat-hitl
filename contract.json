@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0",
+  "contract_name": "wechat-hitl-over-dsh",
+  "objective_guard": "目标冻结：让 DSH 会话在结束/需人工确认时主动微信推送，并由微信回复续接原会话；范围实质变化须新建根任务",
+  "deliverables": [
+    {
+      "id": "design",
+      "kind": "document",
+      "path_pattern": "70-WorkSpace/wechat-hitl-20261026/PLAN-wechat-hitl.md",
+      "format": "Markdown UTF-8",
+      "required": true,
+      "acceptance": [
+        ">=3 条路线对比（触发/回环/公网方案/工作量/风险矩阵）",
+        "明确推荐并说明理由",
+        "回答关键问题 1-6",
+        "含 frontmatter"
+      ]
+    },
+    {
+      "id": "prototype",
+      "kind": "code-or-config",
+      "path_pattern": "70-WorkSpace/wechat-hitl-20261026/ (plugin + CLI + gateway patch)",
+      "format": "js/mjs/json",
+      "required": true,
+      "acceptance": [
+        "最小闭环可运行：DSH 会话触发 -> 微信收到带选项问题 -> 回 1 -> 原会话继续",
+        "有真实微信往返证据"
+      ]
+    },
+    {
+      "id": "runbook",
+      "kind": "document",
+      "path_pattern": "70-WorkSpace/微信主动推送与人工确认回环说明.md",
+      "format": "Markdown UTF-8",
+      "required": true,
+      "acceptance": [
+        "安装/回滚/验证/限制/安全面齐全",
+        "含真实路径与命令"
+      ]
+    }
+  ],
+  "worker_output": {
+    "format": "JSON",
+    "schema": "C:/Users/wwm_1/.agents/skills/ptc-multi-agent-control/assets/worker-receipt.schema.json"
+  },
+  "final_response_sections": [
+    "根任务与目标",
+    "完成项及作用",
+    "实际模型路由与降级",
+    "产出物",
+    "验证证据",
+    "限制与下一步唯一动作"
+  ],
+  "invariants": [
+    "controller_only_writes_ledger",
+    "one_root_task_per_session",
+    "workers_return_receipts",
+    "review_and_done_require_evidence",
+    "done_requires_progress_100"
+  ]
+}

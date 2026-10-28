@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "receipt_id": "receipt-hitl-dsh-side",
+  "task_id": "task-20261026T012723728533Z-63e3e3240c58",
+  "subtask_id": "subtask-20261026T022549947608Z-73a1a6457824",
+  "route": "controller-codex",
+  "executor": "dsh-main(controller)",
+  "model": "opencode-go/deepseek-v4.1-flash",
+  "outcome": "completed",
+  "summary": "实现 hitl-store 共享状态层（请求表/四级回复解析/发件箱/headless 续跑）、dsh-wechat-hitl Cordis 插件（turn-end 推送、ask_user_question 推送、approval/request 阻塞式批准、答复注入）、CLI wx-hitl.mjs 与 14 条单测。",
+  "files_changed": [
+    "70-WorkSpace/wechat-hitl-20261026/lib/hitl-store.js",
+    "70-WorkSpace/wechat-hitl-20261026/pkg/dsh-wechat-hitl/index.js",
+    "70-WorkSpace/wechat-hitl-20261026/pkg/dsh-wechat-hitl/package.json",
+    "70-WorkSpace/wechat-hitl-20261026/pkg/dsh-wechat-hitl/cordis.patch.yml",
+    "70-WorkSpace/wechat-hitl-20261026/bin/wx-hitl.mjs",
+    "70-WorkSpace/wechat-hitl-20261026/test/hitl-store.test.mjs",
+    "70-WorkSpace/wechat-hitl-20261026/test/plugin.test.mjs",
+    "70-WorkSpace/wechat-hitl-20261026/test/run-tests.ps1"
+  ],
+  "validation": [
+    "14/14 单测通过（test/run-tests.ps1，状态隔离到 state-test）",
+    "headless profile 实测 turn-end-notify -> 发件箱 -> 网关 outbox-sent -> 微信收到",
+    "审批 waterfall 单测：回1 -> allowed-once；回2 -> rejected；超时 -> next() 委派",
+    "安装后源文件与 profiles 内文件 MD5 一致"
+  ],
+  "risks": [
+    "Web 宿主内答复直插需 DSH Web 重启后生效（patchReload 只重放 patch 不重载模块）",
+    "headless 进程收尾慢，已用 NDJSON final 判定缓解"
+  ]
+}

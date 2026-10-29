@@ -47,12 +47,13 @@ export function apply(ctx, config = {}) {
     minTurnMs: 3000,
     maxTextChars: 900,
     pollMs: 1500,
-    approval: { enabled: true, timeoutMs: 5 * 60 * 1000, options: ["允许一次", "拒绝"] },
+    // 2026-10-29：5 分钟太短（用户常在 5 分钟边缘回复，晚几十秒就撞过期），改为 10 分钟。
+  approval: { enabled: true, timeoutMs: 10 * 60 * 1000, options: ["允许一次", "拒绝"] },
     excludeSessionIdPrefixes: ["wx-"],
     excludeKinds: [],
     ...config,
   };
-  cfg.approval = { ...{ enabled: true, timeoutMs: 5 * 60 * 1000, options: ["允许一次", "拒绝"] }, ...(config.approval ?? {}) };
+  cfg.approval = { ...{ enabled: true, timeoutMs: 10 * 60 * 1000, options: ["允许一次", "拒绝"] }, ...(config.approval ?? {}) };
 
   const skipByEnv = process.env.DSH_WECHAT_HITL_SKIP === "1";
   const log = (obj) => store.log({ plugin: "wechat-hitl", ...obj });
@@ -174,7 +175,7 @@ export function apply(ctx, config = {}) {
     if (Array.isArray(cfg.excludeKinds) && cfg.excludeKinds.includes(req?.toolName)) return next();
     // TTL 必须等于实际等待窗口：以前用默认 30 分钟 TTL 却只等 5 分钟，
     // 推送写着「有效期 30 分钟」，用户在 5 分钟后就被判过期（2026-10-29 审计）。
-    const approvalTimeoutMs = Math.max(5000, Number(cfg.approval.timeoutMs) || 300000);
+    const approvalTimeoutMs = Math.max(5000, Number(cfg.approval.timeoutMs) || 600000);
     const request = store.createRequest({
       sessionId: session.id,
       mode: "approval",
@@ -205,7 +206,7 @@ export function apply(ctx, config = {}) {
       await store.sleep(700);
     }
     store.markStatus(request.id, "expired");
-    await store.pushWechat("⌛ 批准请求已过期（" + Math.round((Number(cfg.approval.timeoutMs) || 300000) / 60000) + " 分钟无回复），已交回 DSH 界面处理。", undefined, { sessionId: request.sessionId });
+    await store.pushWechat("⌛ 批准请求已过期（" + Math.round((Number(cfg.approval.timeoutMs) || 600000) / 60000) + " 分钟无回复），已交回 DSH 界面处理。", undefined, { sessionId: request.sessionId });
     return next();
   });
 

@@ -296,7 +296,17 @@ async function handleCodedReply(text, target) {
   }
   if (routed.kind === "status") return hitl.formatSessionStatus(routed.sessionId);
   if (routed.kind === "answer-ambiguous") return hitl.formatAmbiguous(routed.candidates);
-  if (routed.kind === "relay") return relayToBoundSession(routed.text, target, { sessionId: routed.sessionId });
+  if (routed.kind === "relay") {
+    // 用户回「37 1」时若那条确认已过期，过去会被静默转成普通消息，用户以为批复生效了
+    // （2026-10-29 实测：回复晚到 5 分钟 → 过期 → 被 relay → 会话又提权 → 又推一条）。
+    // 现在明确告诉他：这条确认已不存在，转达内容仍然送给会话。
+    const numeric = /^[0-9]{1,2}(\s+[0-9]{1,2})?$/.test(String(routed.text ?? "").trim());
+    const relayed = await relayToBoundSession(routed.text, target, { sessionId: routed.sessionId });
+    if (!numeric) return relayed;
+    return "这条确认已经不在了（可能已过期或被处理），所以没有当成批准。\n" +
+      "已把你的内容作为普通消息转给该会话。\n" +
+      (relayed ? "" : "") + "如果还需要批准，会话会再发一条新的确认——看首行 R 编号区分。";
+  }
 
   const request = routed.request;
   const updated = hitl.markAnswered(request.id, { ...routed.option, raw: text }, "wechat") ?? request;

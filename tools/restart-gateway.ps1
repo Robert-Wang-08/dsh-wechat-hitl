@@ -16,12 +16,34 @@
 #
 # 用法：pwsh -NoProfile -File restart-gateway.ps1 [-TimeoutSeconds 180]
 param(
-  [int]$TimeoutSeconds = 180
+  [int]$TimeoutSeconds = 180,
+  [switch]$Force
 )
 $ErrorActionPreference = 'Continue'
 $stateDir = 'C:\Users\wwm_1\.openclaw\state'
 $logFile = 'D:\src\dsh\dsh-wechat-hitl\state\gateway.log'
 $toolsDir = 'D:\src\dsh\dsh-wechat-hitl\tools'
+
+# 重启会有一两分钟入站空窗：这段时间你如果在微信里回了确认，那条答复会丢
+# （2026-10-29 实测：05:58 重启，05:56 那条「37 1」没被处理 → 批准过期 → 会话又提权）。
+# 有待确认在等答复时先警告，5 秒缓冲；赶时间加 -Force。
+try {
+  $pendingFile = Join-Path (Split-Path $logFile -Parent) 'pending.json'
+  if (Test-Path $pendingFile) {
+    $st = Get-Content $pendingFile -Raw | ConvertFrom-Json
+    $nowMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $live = @($st.requests.PSObject.Properties | Where-Object { $_.Value.status -eq 'pending' -and [int64]$_.Value.expiresAt -gt $nowMs } | ForEach-Object { $_.Value })
+    if ($live.Count -gt 0 -and -not $Force) {
+      Write-Output ('!!! 还有 ' + $live.Count + ' 条待确认在等你答复，重启期间它们的答复会丢：')
+      foreach ($r in $live) {
+        $left = [math]::Round(([int64]$r.expiresAt - $nowMs) / 60000, 1)
+        Write-Output ('    R' + $r.id.ToString().Substring($r.id.ToString().Length - 6) + ' 剩余 ' + $left + ' 分钟：' + $r.question.ToString().Substring(0, [Math]::Min(40, $r.question.ToString().Length)))
+      }
+      Write-Output '    先回完再重启；或在 5 秒内 Ctrl+C。加 -Force 可无视。'
+      Start-Sleep -Seconds 5
+    }
+  }
+} catch { Write-Output ('pending 检查失败（不影响重启）：' + $_.Exception.Message) }
 
 # 特征串用变量拼接：避免本脚本自身的命令行被误匹配后把自己杀掉
 $a = 'openclaw'

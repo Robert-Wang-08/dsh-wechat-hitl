@@ -84,6 +84,23 @@ out-…3033d0  attempts=162  17:51:07 → 02:01:31  gap median=181s
 
 **生效边界**：网关已重启，出口侧全部生效；审批门禁与文案跑在 DSH Web 宿主，**需再重启一次 DSH Web** 才加载新插件副本。
 
+## 5a. `hasSessionController=false` 的影响评估（2026-10-29）
+
+| 能力 | 是否受影响 | 现在的实际行为 |
+|---|---|---|
+| 审批答复（approval） | **不受影响** | 答复由阻塞中的 `approval/request` 在进程内消费（`in-turn`）；窗口内 6/6 成功 |
+| 提问答复 / 推送答复（inject） | **受影响** | 只能靠网关 spawn `dsh --profile headless --session-id <原会话>` 续跑：冷启动 + 一轮模型，秒级变分钟级，每答一次多一个进程与一轮 token |
+| 微信遥控（relay / message） | **受影响** | 同上；窗口内 3 条 relay 全是 headless 续跑 |
+| 会话正被 GUI 写锁持有 | **会失败** | headless 拿不到写权 → 记 `not-live`，答复落不回原会话 |
+| 出站推送 / 入站路由 / 会话码 / 绑定 | 不受影响 | 走 outbox + 网关，与控制器无关 |
+
+两个附带事实：
+
+1. **日志里的 `injected` 不等于进程内注入**：网关在 headless 快路径拿到文本后也写 `markDelivered(..., "injected")`（网关第 274 行），所以真正的进程内注入在本机从未发生过（95+ 次加载全 false）。
+2. **目前没咬到你**：窗口内 6 条 `not-live` 全落在审批请求上，而审批有 `in-turn` 兜底；真正会丢的是「非审批答复 + 会话正被 GUI 持有」这个组合。
+
+**低成本替代方案**（不接 Typert 也能立刻改善）：把 `injected` 拆成 `headless-fast` / `headless-bg`，并在 `not-live` 时给用户一句「答复稍后自动重试」，约 10 行改动。
+
 ## 5b. 原始待办（保留原始建议以便对照）
 
 1. **释放 claim**：`needsContext` 分支里补一次 claim 释放，重试间隔交给 `nextAttemptAt`（否则永远 3 分钟一撞）。

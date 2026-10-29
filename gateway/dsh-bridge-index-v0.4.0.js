@@ -252,6 +252,14 @@ async function handleCodedReply(text, target) {
   }
   const routed = hitl.resolveByCode(text, hitl.listPending());
   if (routed.kind === "no-code") return null;
+  if (routed.kind === "unrecognized-concat") {
+    // 用户口径（2026-10-29）：连写不猜，回未识别 + 正确写法。
+    const req = routed.request;
+    const handle = hitl.handleText(req);
+    const examples = req.options.map((option) => handle + " " + option.key).join(" / ");
+    return "未识别「" + routed.code + "」：连写会跟会话码混淆，所以不做猜测。\n" +
+      "请用「识别码 空格 选项」回复，例：" + examples;
+  }
   if (routed.kind === "unknown-code") {
     const sessions = hitl.listSessions(8);
     return "没有回复id " + routed.code + "。\n\n" + hitl.formatSessionListV2(hitl.listSessionsV2(10));

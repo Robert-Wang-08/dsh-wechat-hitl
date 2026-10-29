@@ -76,7 +76,7 @@ out-…3033d0  attempts=162  17:51:07 → 02:01:31  gap median=181s
 |---|---|---|---|
 | 1 | 释放发件箱租约 + 入站即解锁 | ✅ 已改，网关侧已生效 | `lib/hitl-store.js`：失败分支 `claimedAt = 0`；冷却 60s → **30 分钟兜底**；新增 `releaseContextHold()`，网关入站钩子先解锁再补发 |
 | 2 | 「有效期」文案与门禁对齐 | ✅ 已改，待 DSH Web 重启生效 | `pkg/dsh-wechat-hitl/index.js`：审批请求 TTL = `approval.timeoutMs`，文案由 `req.expiresAt` 推导，不再写死 30 分钟 |
-| 3 | 防「码+选项」粘连 | ✅ 已改，网关侧已生效 | 提示统一改「识别码 空格 选项」；`resolveByCode` 新增粘连消歧，新增 `matchConcatenatedAnswer()` |
+| 3 | 防「码+选项」粘连 | ✅ 已改（按用户口径：**不猜**） | 提示统一改「识别码 空格 选项」；`resolveByCode` 遇到纯数字连写（如 `11`）且能拆成「识别码+选项」时返回 `unrecognized-concat`，网关回「未识别 + 正确写法」，不再猜成答复或会话码 |
 | 4 | `sessionController` 探测 | ⚠️ 仅定位 | DSH 里没有 `ctx.sessionController` 这个服务（全仓无该引用）；实际是 Typert 远程接口包 `dsh-api-session-controller`，改造属设计变更，单独一轮 |
 | 5 | gateway.log 追加模式 | ✅ 已改 | launcher 改 `>>`；重启后日志 37 KB 保留历史 |
 

@@ -168,7 +168,18 @@ test("识别码：多请求下只回码 -> need-option，提示怎么补全", ()
   store.markStatus(req.id, "cancelled");
 });
 
-test("识别码：粘连写法仍能消歧（裸 \"21\" 命中识别码 2 的选项 1）", () => {
+test("网关路由：连写不猜，回 unrecognized-concat（带空格才解析）", () => {
+  for (const item of store.listPending()) store.markStatus(item.id, "cancelled");
+  const req = store.createRequest({ sessionId: "session-h6", question: "要不要删", options: ["允许", "拒绝"] });
+  const glued = store.resolveByCode(String(req.handle) + "1", [req]);
+  assert.equal(glued.kind, "unrecognized-concat", "连写不该被当成答复，实际: " + glued.kind);
+  assert.equal(glued.request.id, req.id);
+  const spaced = store.resolveByCode(String(req.handle) + " 1", [req]);
+  assert.notEqual(spaced.kind, "unrecognized-concat", "带空格应正常解析");
+  store.markStatus(req.id, "cancelled");
+});
+
+test("直接解析层（非网关）仍认连写：裸 \"21\" 命中识别码 2 的选项 1", () => {
   for (const item of store.listPending()) store.markStatus(item.id, "cancelled");
   const a = store.createRequest({ sessionId: "session-h5a", question: "问一", options: ["是", "否"] });
   const b = store.createRequest({ sessionId: "session-h5b", question: "问二", options: ["允许", "拒绝"] });

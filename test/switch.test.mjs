@@ -161,9 +161,23 @@ test("识别码：多请求下只回码 -> need-option，提示怎么补全", ()
   assert.equal(hit.request.id, req.id);
   store.markStatus(other.id, "cancelled");
   const hint = store.formatNeedOption(req);
-  assert.match(hint, new RegExp(String(req.handle) + "1"));
-  assert.match(hint, new RegExp(String(req.handle) + "2"));
+  // 2026-10-29：提示必须带空格。以前教用户写「21」，正好撞上 2 位会话码。
+  assert.match(hint, new RegExp(String(req.handle) + " 1"), "提示要用「识别码 空格 选项」");
+  assert.match(hint, new RegExp(String(req.handle) + " 2"));
+  assert.equal(new RegExp(String(req.handle) + "[0-9]").test(hint), false, "提示里不应再出现粘连写法");
   store.markStatus(req.id, "cancelled");
+});
+
+test("识别码：粘连写法仍能消歧（裸 \"21\" 命中识别码 2 的选项 1）", () => {
+  for (const item of store.listPending()) store.markStatus(item.id, "cancelled");
+  const a = store.createRequest({ sessionId: "session-h5a", question: "问一", options: ["是", "否"] });
+  const b = store.createRequest({ sessionId: "session-h5b", question: "问二", options: ["允许", "拒绝"] });
+  const hit = store.matchReply(String(b.handle) + "1", [a, b]);
+  assert.equal(hit.ok, true, "粘连写法要能命中");
+  assert.equal(hit.request.id, b.id);
+  assert.equal(hit.option.key, "1");
+  store.markStatus(a.id, "cancelled");
+  store.markStatus(b.id, "cancelled");
 });
 
 test("识别码：多请求下裸数字不再猜，必须带码", () => {

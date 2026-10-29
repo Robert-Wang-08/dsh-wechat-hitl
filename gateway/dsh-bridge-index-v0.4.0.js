@@ -361,7 +361,18 @@ export default definePluginEntry({
       if (!text) return undefined;
       // 入站即刷新：用户随手发一句话就会刷新微信 bot 的 contextToken，
       // 这时立刻把因缺 token 而滞留的积压补发出去（相当于「预热」的自愈形态）。
-      try { if (hitl) { const backlog = (hitl.loadState().outbox ?? []).filter((item) => item.needsContext).length; if (backlog > 0) { dbg({ hitl: "flush-on-inbound", backlog }); pumpOutbox().catch(() => {}); } } } catch {}
+      // 入站 = contextToken 刷新信号：先解开「等 token」的持有，再立刻补发。
+      // 没有这一步，补发要等 30 分钟兜底冷却（2026-10-29 审计）。
+      try {
+        if (hitl) {
+          const backlog = (hitl.loadState().outbox ?? []).filter((item) => item.needsContext).length;
+          if (backlog > 0) {
+            const released = typeof hitl.releaseContextHold === "function" ? hitl.releaseContextHold() : 0;
+            dbg({ hitl: "flush-on-inbound", backlog, released });
+            pumpOutbox().catch(() => {});
+          }
+        }
+      } catch {}
       const target = resolveTarget(event, ctx);
       const rawKey = String(ctx?.sessionKey ?? event?.sessionKey ?? "wx-default");
       const mapKey = rawKey.replace(/[^A-Za-z0-9_-]+/g, "-").slice(-60);

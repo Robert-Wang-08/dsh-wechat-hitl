@@ -103,7 +103,7 @@ try {
 $launcher = Join-Path $stateDir 'start-gateway.cmd'
 $launcherBody = '@echo off' + [Environment]::NewLine +
   'set DSH_BRIDGE_EGRESS=cli' + [Environment]::NewLine +
-  '"C:\openclaw-runtime\openclaw.cmd" gateway run > "' + $logFile + '" 2>&1' + [Environment]::NewLine
+  '"C:\openclaw-runtime\openclaw.cmd" gateway run >> "' + $logFile + '" 2>&1' + [Environment]::NewLine
 Set-Content -Path $launcher -Value $launcherBody -Encoding ascii
 
 # 脱离 DSH 的 Windows Job：WMI 创建的进程父级是 WmiPrvSE，DSH Web 重启不会把它带走。

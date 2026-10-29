@@ -172,6 +172,9 @@ export function apply(ctx, config = {}) {
     const session = req?.agent?.session;
     if (excluded(session)) return next();
     if (Array.isArray(cfg.excludeKinds) && cfg.excludeKinds.includes(req?.toolName)) return next();
+    // TTL 必须等于实际等待窗口：以前用默认 30 分钟 TTL 却只等 5 分钟，
+    // 推送写着「有效期 30 分钟」，用户在 5 分钟后就被判过期（2026-10-29 审计）。
+    const approvalTimeoutMs = Math.max(5000, Number(cfg.approval.timeoutMs) || 300000);
     const request = store.createRequest({
       sessionId: session.id,
       mode: "approval",
@@ -180,15 +183,15 @@ export function apply(ctx, config = {}) {
       question: String(req?.toolName ?? "unknown") + (req?.reason ? "：" + String(req.reason) : ""),
       options: cfg.approval.options,
       context: sessionCwd(session) ?? "",
-    });
-    log({ stage: "approval-ask", id: request.id, tool: req?.toolName, sessionId: session.id });
+    }, approvalTimeoutMs);
+    log({ stage: "approval-ask", id: request.id, tool: req?.toolName, sessionId: session.id, ttlMs: approvalTimeoutMs });
     const pushed = await store.pushWechat(store.formatAsk(request));
     if (!pushed.ok) {
       log({ stage: "approval-push-failed", id: request.id, output: pushed.output });
       store.markStatus(request.id, "cancelled");
       return next();
     }
-    const deadline = Date.now() + Math.max(5000, Number(cfg.approval.timeoutMs) || 300000);
+    const deadline = Date.now() + approvalTimeoutMs;
     while (Date.now() < deadline) {
       if (req?.signal?.aborted) { store.markStatus(request.id, "cancelled"); return "cancelled"; }
       const fresh = store.getRequest(request.id);

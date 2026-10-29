@@ -160,9 +160,38 @@ async function waitDelivery(requestId, timeoutMs) {
 function runInBackground(requestId, st, target) {
   return waitForFinal(st, HARD_CAP_MS).then(() => {
     const parsed = parseNdjson(st.out);
-    try { hitl.markDelivered(requestId, parsed.text ? "injected" : "not-live"); } catch {}
+    // 标签拆分（2026-10-29）：headless 续跑不是进程内注入，别再把两者混记成 injected。
+    try { hitl.markDelivered(requestId, parsed.text ? "headless-bg" : "not-live"); } catch {}
     sendAsync(target, parsed.text ?? "[DSH 无输出] exit=" + st.code);
   });
+}
+
+/**
+ * 一次延迟重试：not-live 之后隔 60 秒再用 headless 续跑一次。
+ *
+ * 为什么需要：hasSessionController 恒为 false，非审批答复只能靠 headless 续跑；
+ * 会话被 GUI 占着写锁时会立刻失败。以前只回一句「无法接收」，用户不知道答复会不会丢。
+ * 这里补一次真实重试，让「稍后自动重试」这句话是有代码支撑的。
+ */
+function retryLater(requestId, sessionId, prompt, target, delayMs = 60000) {
+  const timer = setTimeout(() => {
+    try {
+      const fresh = hitl?.getRequest?.(requestId);
+      if (fresh?.deliveredAt) return;                    // 期间已交付，不重复跑
+      const st = startDsh(sessionId, prompt);
+      waitForFinal(st, FAST_PATH_MS).then(() => {
+        const parsed = parseNdjson(st.out);
+        if (parsed.text) {
+          hitl.markDelivered(requestId, "headless-bg");
+          sendAsync(target, parsed.text);
+          dbg({ hitl: "retry-ok", id: requestId });
+        } else {
+          dbg({ hitl: "retry-empty", id: requestId, code: st.code });
+        }
+      }).catch(() => {});
+    } catch (error) { dbg({ hitl: "retry-error", id: requestId, error: String(error) }); }
+  }, delayMs);
+  try { timer.unref?.(); } catch {}
 }
 
 /**
@@ -219,7 +248,7 @@ async function relayToBoundSession(text, target, binding) {
   const finished = await waitForFinal(st, FAST_PATH_MS);
   const parsed = parseNdjson(st.out);
   if (finished && parsed.text) {
-    hitl.markDelivered(request.id, "injected");
+    hitl.markDelivered(request.id, "headless-fast");
     return "已转给会话 " + binding.sessionId.replace(/^session-/, "").slice(0, 8) + "：" + "\n\n" + parsed.text;
   }
   if (!finished) {
@@ -227,7 +256,8 @@ async function relayToBoundSession(text, target, binding) {
     return "已转给会话，正在后台跑，完成后单独推结果。";
   }
   hitl.markDelivered(request.id, "not-live");
-  return "会话当前无法接收（可能正在别处运行），消息已记录。";
+  retryLater(request.id, binding.sessionId, text, target);
+  return "会话当前收不了（可能正被界面占用），消息已记下；60 秒后自动重试一次，重试成功会直接把结果推给你。";
 }
 
 
@@ -279,7 +309,7 @@ async function handleCodedReply(text, target) {
   const finished = await waitForFinal(st, FAST_PATH_MS);
   const parsed = parseNdjson(st.out);
   if (finished && parsed.text) {
-    hitl.markDelivered(request.id, "injected");
+    hitl.markDelivered(request.id, "headless-fast");
     return hitl.formatResolved(updated) + "\n\n" + parsed.text;
   }
   if (!finished) {
@@ -287,7 +317,8 @@ async function handleCodedReply(text, target) {
     return hitl.formatResolved(updated) + "\n已交给原会话继续跑，完成后单独推结果。";
   }
   hitl.markDelivered(request.id, "not-live");
-  return hitl.formatResolved(updated) + "\n原会话当前无法接收（可能正在别处运行）。";
+  retryLater(request.id, request.sessionId, prompt, target);
+  return hitl.formatResolved(updated) + "\n原会话当前收不了（可能正被界面占用）；60 秒后自动重试一次，成功会直接把结果推给你。";
 }
 
 /** 入站文本命中待确认请求时的处理；返回 null 表示不拦截（走普通任务路径）。 */
@@ -332,7 +363,7 @@ async function handleHumanReply(text, target) {
   const finished = await waitForFinal(st, FAST_PATH_MS);
   const parsed = parseNdjson(st.out);
   if (finished && parsed.text) {
-    hitl.markDelivered(request.id, "injected");
+    hitl.markDelivered(request.id, "headless-fast");
     return hitl.formatResolved(updated) + "\n\n" + parsed.text;
   }
   const tail = (st.err || "").trim().split(/\r?\n/).pop() || "";
@@ -345,7 +376,9 @@ async function handleHumanReply(text, target) {
     return hitl.formatResolved(updated) + "\n⏳ 原会话已收到答复并在后台继续，完成后单独推送结果。";
   }
   hitl.markDelivered(request.id, "not-live");
-  return hitl.formatResolved(updated) + "\n[续跑无输出] exit=" + st.code + (tail ? " stderr=" + tail.slice(-200) : "");
+  retryLater(request.id, request.sessionId, prompt, target);
+  return hitl.formatResolved(updated) + "\n[续跑无输出] exit=" + st.code + (tail ? " stderr=" + tail.slice(-200) : "") +
+    "\n60 秒后自动重试一次。";
 }
 
 export default definePluginEntry({

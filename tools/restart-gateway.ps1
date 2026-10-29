@@ -6,8 +6,13 @@
 #      下一次启动会在 gateway-run-bootstrap 阶段静默失败，日志只写 "The CLI command failed"。
 #   3) openclaw-weixin 官方包升级会覆盖 dist/src 下的 monitor，入站游标补丁随之丢失。
 #      因此每次启动前都跑一次幂等补丁（apply-weixin-inbound-fix.ps1），并保证登录自启也走这条路。
+#   4) 2026-10-29 实测：从 DSH 会话里用 Start-Process 起的网关属于 DSH 的 Windows Job，
+#      DSH Web 一重启（Job 关闭）网关就被带走，微信通道静默断掉。
+#      所以这里改用 WMI Win32_Process.Create 启动，父进程是 WmiPrvSE，脱离 Job，DSH 重启不影响网关。
+#   5) 2026-10-29 实测：进程内出站（inproc）对 contextToken 判定偏严，常报 contextToken missing
+#      而 CLI 出口同一条消息能发出去。因此在启动器里默认 DSH_BRIDGE_EGRESS=cli（可用环境变量覆盖回来）。
 #
-# 本脚本 = 停旧网关 + 清 stale lock + 重新注入入站补丁 + 修好登录自启钩子 + 后台重启 + 等 18789 可用。
+# 本脚本 = 停旧网关 + 清 stale lock + 重新注入入站补丁 + 修好登录自启钩子 + 脱离 Job 重启 + 等 18789 可用。
 #
 # 用法：pwsh -NoProfile -File restart-gateway.ps1 [-TimeoutSeconds 180]
 param(
@@ -23,6 +28,7 @@ $a = 'openclaw'
 $b = '.mjs'
 $gateways = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
   Where-Object {
+    $_.ExecutablePath -like '*openclaw-runtime*' -and
     $_.CommandLine -like "*$a*$b*" -and
     $_.CommandLine -like '*gateway run*' -and
     $_.CommandLine -notlike '*ptc-runtime*' -and
@@ -74,6 +80,8 @@ $startupBody = @'
 @echo off
 rem 登录自启：先重新注入 openclaw-weixin 入站游标补丁（幂等），再起网关。
 rem 官方包升级会覆盖 dist/src 下的 monitor，所以这一步不能省。
+rem 出站走 CLI 出口（进程内出口对 contextToken 判定偏严，2026-10-29 实测）。
+set DSH_BRIDGE_EGRESS=cli
 pwsh -NoProfile -WindowStyle Hidden -File "D:\src\dsh\dsh-wechat-hitl\tools\apply-weixin-inbound-fix.ps1"
 start "" /min "C:\openclaw-runtime\openclaw.cmd" gateway run
 '@
@@ -93,10 +101,20 @@ try {
 }
 
 $launcher = Join-Path $stateDir 'start-gateway.cmd'
-$launcherBody = '@echo off' + [Environment]::NewLine + '"C:\openclaw-runtime\openclaw.cmd" gateway run > "' + $logFile + '" 2>&1' + [Environment]::NewLine
+$launcherBody = '@echo off' + [Environment]::NewLine +
+  'set DSH_BRIDGE_EGRESS=cli' + [Environment]::NewLine +
+  '"C:\openclaw-runtime\openclaw.cmd" gateway run > "' + $logFile + '" 2>&1' + [Environment]::NewLine
 Set-Content -Path $launcher -Value $launcherBody -Encoding ascii
 
-Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $launcher -WindowStyle Hidden
+# 脱离 DSH 的 Windows Job：WMI 创建的进程父级是 WmiPrvSE，DSH Web 重启不会把它带走。
+# （用 Start-Process 时网关活不过一次 DSH 重启，2026-10-29 实测。）
+$spawn = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ('cmd.exe /c "' + $launcher + '"') }
+if ($spawn.ReturnValue -ne 0) {
+  Write-Output ('!!! WMI 启动失败（ReturnValue=' + $spawn.ReturnValue + '），退回 Start-Process !!!')
+  Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $launcher -WindowStyle Hidden
+} else {
+  Write-Output ('gateway launcher spawned detached (pid ' + $spawn.ProcessId + ')')
+}
 $rounds = [Math]::Ceiling($TimeoutSeconds / 5)
 for ($i = 0; $i -lt $rounds; $i++) {
   Start-Sleep -Seconds 5

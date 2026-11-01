@@ -98,18 +98,27 @@ if (Test-Path $patcher) {
 # ② 登录自启钩子：Startup 文件夹里的 OpenClaw-Gateway.cmd 也要先打补丁再起网关，
 #    否则「开机自启」这条真实启动路径没有修复，升级后照样丢消息。
 $startupCmd = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\OpenClaw-Gateway.cmd'
+# 注意：注释一律用 ASCII。cmd 按 OEM 代码页读这个文件，中文注释会被写成「?」，
+# 而且 2026-11-01 发现 hook 里少了 DSH_BRIDGE_EGRESS=cli —— 那条缺失正是
+# 「重启之后推送全丢」的复发路径（网关退回进程内出口，缺 contextToken 就永远发不出去）。
 $startupBody = @'
 @echo off
-rem 登录自启：先重新注入 openclaw-weixin 入站游标补丁（幂等），再起网关。
-rem 官方包升级会覆盖 dist/src 下的 monitor，所以这一步不能省。
-rem 出站走 CLI 出口（进程内出口对 contextToken 判定偏严，2026-10-29 实测）。
+rem Login autostart: re-inject the openclaw-weixin inbound cursor patch (idempotent),
+rem then start the gateway.
+rem Egress MUST stay on the CLI path: the in-process egress cannot obtain a
+rem contextToken across module instances (2026-10-29 / 2026-11-01 measured).
 set DSH_BRIDGE_EGRESS=cli
 pwsh -NoProfile -WindowStyle Hidden -File "D:\src\dsh\dsh-wechat-hitl\tools\apply-weixin-inbound-fix.ps1"
 start "" /min "C:\openclaw-runtime\openclaw.cmd" gateway run
 '@
 try {
   $current = if (Test-Path $startupCmd) { Get-Content $startupCmd -Raw } else { '' }
-  if ($current -notmatch 'apply-weixin-inbound-fix') {
+  # 幂等条件必须同时覆盖两件事：
+  #   1) 有没有入站补丁钩子；
+  #   2) 有没有 DSH_BRIDGE_EGRESS=cli（2026-11-01 补：旧的 hook 只有补丁钩子，
+  #      于是这条真实启动路径一直用进程内出口 → 重启后所有推送都发不出去，
+  #      而脚本只检查第 1 条，永远「跳过」，问题就被一直保留下来）。
+  if ($current -notmatch 'apply-weixin-inbound-fix' -or $current -notmatch 'DSH_BRIDGE_EGRESS=cli') {
     if (Test-Path $startupCmd) {
       Copy-Item $startupCmd ($startupCmd + '.bak-' + (Get-Date -Format yyyyMMddHHmmss)) -Force
     }

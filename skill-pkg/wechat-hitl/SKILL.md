@@ -70,7 +70,18 @@ node $cli switch --state running|paused|stopped
    根因：微信 bot 主动发消息依赖 contextToken（由用户最近一次入站消息刷新）。让用户在微信给 bot 发一句话即可，不要重新扫码。
    自愈：缺 token 的消息不丢弃（标记 needsContext 保留 24h），用户下一次入站时自动补发。
 3. 网关异常：pwsh -File dsh-wechat-hitl/tools/restart-gateway.ps1 200（会清理强杀残留的 openclaw.sqlite.cron-authority.lock）。
-4. 改了插件代码必须重启对应进程：DSH 侧插件在 Web 宿主是模块缓存，patchReload: live 不重载模块 → 需重启 DSH Web。
+4. 改了插件代码必须重启对应进程：DSH 侧插件在 Web 宿主是模块缓存，patchReload: live 不重载模块 → 需重启 DSH Web；
+   网关侧同理，改了 lib/hitl-store.js 必须重启 OpenClaw 网关，否则跑的还是旧模块。
+5. 「每条推送都 contextToken missing、微信一条都收不到」（2026-11-01 实测）：
+   先看 state/hitl.log 里 outbox-egress 的 mode——`mode=inproc` 后跟 outbox-wait-context 就是进程内出口拿不到 token。
+   进程内出口调的是 openclaw-weixin extension 的 getContextToken()，**只查本模块实例内存**；
+   网关插件 import 到的是另一个实例，Map 恒空。已在 lib 里修成「内存 → restoreContextTokens → 读
+   <OPENCLAW_STATE_DIR>/openclaw-weixin/accounts/<accountId>.context-tokens.json」三级兜底，
+   并在缺 token 时退回 CLI 出口（mode=cli-fallback）。但仍需重启网关才加载新代码。
+   启动器/登录自启钩子必须带 `set DSH_BRIDGE_EGRESS=cli`（restart-gateway.ps1 会补齐；旧钩子缺这一行是复发路径）。
+6. 「微信里说打开通道没反应、回复没有会话码/回复码」：
+   开关指令现在认自然表述（打开会话微信推送开关 / 打开openclaw通道 / 恢复推送 / 查询推送 都行）；
+   若仍只收到「有 N 个待确认…」，说明有 pending 请求在拦截自由文本，先按提示回「识别码 空格 选项」清掉它。
 
 ## 三态开关
 

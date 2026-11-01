@@ -10,7 +10,12 @@
 #      DSH Web 一重启（Job 关闭）网关就被带走，微信通道静默断掉。
 #      所以这里改用 WMI Win32_Process.Create 启动，父进程是 WmiPrvSE，脱离 Job，DSH 重启不影响网关。
 #   5) 2026-10-29 实测：进程内出站（inproc）对 contextToken 判定偏严，常报 contextToken missing
-#      而 CLI 出口同一条消息能发出去。因此在启动器里默认 DSH_BRIDGE_EGRESS=cli（可用环境变量覆盖回来）。
+#      而 CLI 出口同一条消息能发出去，当时默认 DSH_BRIDGE_EGRESS=cli。
+#   6) 2026-11-01 实测：CLI 出口每条要 spawn 一个 openclaw 子进程，单条 52–57 秒且串行，
+#      积压时延迟按条数线性放大（用户报「通道发布时间的延长会比较多」）。
+#      inproc 出口已在 lib 里修成三级取 token（内存→restoreContextTokens→账号 token 文件），
+#      缺 token 时 drainOutbox 会自动退回 CLI（mode=cli-fallback），所以默认改回 inproc 快速通道，
+#      保留 DSH_BRIDGE_EGRESS 环境变量可覆盖。
 #
 # 本脚本 = 停旧网关 + 清 stale lock + 重新注入入站补丁 + 修好登录自启钩子 + 脱离 Job 重启 + 等 18789 可用。
 #
@@ -105,9 +110,9 @@ $startupBody = @'
 @echo off
 rem Login autostart: re-inject the openclaw-weixin inbound cursor patch (idempotent),
 rem then start the gateway.
-rem Egress MUST stay on the CLI path: the in-process egress cannot obtain a
-rem contextToken across module instances (2026-10-29 / 2026-11-01 measured).
-set DSH_BRIDGE_EGRESS=cli
+rem Egress: in-process fast path (token fallback fixed 2026-11-01); drainOutbox
+rem auto-falls back to the CLI path if the contextToken is still unavailable.
+set DSH_BRIDGE_EGRESS=inproc
 pwsh -NoProfile -WindowStyle Hidden -File "D:\src\dsh\dsh-wechat-hitl\tools\apply-weixin-inbound-fix.ps1"
 start "" /min "C:\openclaw-runtime\openclaw.cmd" gateway run
 '@
@@ -115,10 +120,11 @@ try {
   $current = if (Test-Path $startupCmd) { Get-Content $startupCmd -Raw } else { '' }
   # 幂等条件必须同时覆盖两件事：
   #   1) 有没有入站补丁钩子；
-  #   2) 有没有 DSH_BRIDGE_EGRESS=cli（2026-11-01 补：旧的 hook 只有补丁钩子，
+  #   2) 有没有 DSH_BRIDGE_EGRESS 设置（2026-11-01 补：旧的 hook 只有补丁钩子，
   #      于是这条真实启动路径一直用进程内出口 → 重启后所有推送都发不出去，
   #      而脚本只检查第 1 条，永远「跳过」，问题就被一直保留下来）。
-  if ($current -notmatch 'apply-weixin-inbound-fix' -or $current -notmatch 'DSH_BRIDGE_EGRESS=cli') {
+  #      2026-11-01 晚间起固定为 inproc（快速通道），CLI 只作缺 token 时的自动兜底。
+  if ($current -notmatch 'apply-weixin-inbound-fix' -or $current -notmatch 'DSH_BRIDGE_EGRESS=inproc') {
     if (Test-Path $startupCmd) {
       Copy-Item $startupCmd ($startupCmd + '.bak-' + (Get-Date -Format yyyyMMddHHmmss)) -Force
     }
@@ -133,7 +139,7 @@ try {
 
 $launcher = Join-Path $stateDir 'start-gateway.cmd'
 $launcherBody = '@echo off' + [Environment]::NewLine +
-  'set DSH_BRIDGE_EGRESS=cli' + [Environment]::NewLine +
+  'set DSH_BRIDGE_EGRESS=inproc' + [Environment]::NewLine +
   '"C:\openclaw-runtime\openclaw.cmd" gateway run >> "' + $logFile + '" 2>&1' + [Environment]::NewLine
 Set-Content -Path $launcher -Value $launcherBody -Encoding ascii
 

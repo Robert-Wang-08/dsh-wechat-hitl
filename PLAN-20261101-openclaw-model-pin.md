@@ -18,8 +18,12 @@
 1. `agents.defaults.model = { primary: "opencode-go/deepseek-v4.1-flash", fallbacks: ["ais-2dsglm/deepseek-v4.1-flash"] }`
    —— 主备都钉在 DeepSeek，降级只会在这两条路由之间，永远不会漂到 Claude/GPT。
 2. `models.providers` 注册两个 provider（schema 见 dist/model-registry-Cft8Rf7W.mjs `ProviderConfigSchema`）：
-   - `opencode-go`: baseUrl `https://opencode.ai/zen/go/v1`，api `openai-completions`，apiKey 用 `{source:"env", id:"DSHPACK_KEY_OPENCODE"}` 秘密引用（模型目录取自 pi-ai `opencode-go.json`，deepseek-v4.1-flash 确实在目录里）。
-   - `ais-2dsglm`: baseUrl 取 `DSHPACK_BASE_AIS`（缺省 `http://47.101.159.7:29988/v1`，与 dsh-config-pack/config/40-models.yml 一致），apiKey `{source:"env", id:"DSHPACK_KEY_AIS"}`，模型 `deepseek-v4.1-flash`、`glm-5.3-flash`。
+   - `opencode-go`: baseUrl `https://opencode.ai/zen/go/v1`，api `openai-completions`，apiKey 写字符串引用 `"$" + "{DSHPACK_KEY_OPENCODE}"`（模型目录取自 pi-ai `opencode-go.json`，deepseek-v4.1-flash 确实在目录里）。
+   - `ais-2dsglm`: baseUrl 取 `DSHPACK_BASE_AIS`（缺省 `http://47.101.159.7:29988/v1`，与 dsh-config-pack/config/40-models.yml 一致），apiKey `"$" + "{DSHPACK_KEY_AIS}"`，模型 `deepseek-v4.1-flash`、`glm-5.3-flash`。
+   - **踩坑记录（2026-11-01 23:16）**：第一版把 apiKey 写成 `{source:"env", id:"…"}` 对象，网关启动报
+     `models.providers.*.apiKey: *** input` 拒绝启动——这个位置的 apiKey 只接受字符串；
+     env 引用约定是形如 "$" + "{ENV_VAR}" 的字符串（解析期由 normalizeApiKeyConfig 转成环境变量名，
+     见 dist/models-config.providers.secret-helpers-D_hIA8wW.mjs）。已改为字符串形式。
    - 秘密只写环境变量名，不落明文；脚本自带断言，写出前会检查配置里没有明文 key。
 3. `plugins.entries.anthropic.enabled = false` —— 拆掉 Claude 后端；codex 不动（用户未要求）。
 

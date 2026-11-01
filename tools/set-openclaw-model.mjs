@@ -33,11 +33,13 @@ const raw = readFileSync(CONFIG, "utf8");
 const cfg = JSON.parse(raw);
 copyFileSync(CONFIG, backup);
 
-// 秘密引用：只写环境变量名，不写值。缺变量时只警告（网关侧会在调用时报缺凭据）。
+// 秘密引用：models.providers.*.apiKey 只接受字符串，openclaw 约定 ${ENV_VAR}
+// 会在解析期转成环境变量名（dist/models-config.providers.secret-helpers: normalizeApiKeyConfig）。
+// 只写环境变量名，不写值。缺变量时只警告（网关侧会在调用时报缺凭据）。
 function envRef(name) {
   const present = Boolean(process.env[name]);
-  if (!present) console.log("[warn] 环境变量 " + name + " 当前不存在（凭据引用仍会写入，运行时报缺）");
-  return { source: "env", id: name };
+  if (!present) console.log("[note] 本进程未见 " + name + "（用户级变量即可，网关会继承）");
+  return "$" + "{" + name + "}";
 }
 
 const aisBase = (process.env.DSHPACK_BASE_AIS || "").trim() || "http://47.101.159.7:29988/v1";

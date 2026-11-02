@@ -25,7 +25,11 @@ const WORKDIR = "D:/nutstore/1.logseq";
 const FAST_PATH_MS = 150000;      // 150s 内完成则直接回复
 const HARD_CAP_MS = 20 * 60000;   // 异步任务 20 分钟硬上限
 // 共享状态层唯一实现（与 DSH 侧插件、CLI 同一份）；可用 DSH_WECHAT_HITL_LIB 覆盖。
-const HITL_MODULE = process.env.DSH_WECHAT_HITL_LIB || "file:///D:/src/dsh/dsh-wechat-hitl/lib/hitl-store.js";
+// lib 相对定位优先（本文件经 junction 部署后 realpath 即仓库路径），找不到再回落旧绝对路径
+import { existsSync as _existsSync } from "node:fs";
+const _relLib = new URL("../../lib/hitl-store.js", import.meta.url);
+const HITL_MODULE = process.env.DSH_WECHAT_HITL_LIB
+  || (_existsSync(_relLib) ? _relLib.href : "file:///D:/src/dsh/dsh-wechat-hitl/lib/hitl-store.js");
 const OUTBOX_POLL_MS = 2000;
 const DELIVERY_WAIT_MS = 12000;
 

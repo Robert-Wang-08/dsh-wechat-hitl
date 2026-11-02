@@ -1,0 +1,7 @@
+{
+  "id": "dsh-bridge",
+  "name": "DSH Bridge",
+  "description": "Routes user turns to a local DeepSeek Harness (dsh) headless run and returns its text as the reply.",
+  "activation": { "onStartup": true },
+  "configSchema": { "type": "object", "additionalProperties": false }
+}

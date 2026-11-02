@@ -95,6 +95,7 @@ node $cli switch --state running|paused|stopped
 
 - 状态与审计：dsh-wechat-hitl/state/{pending.json,control.json,sessions.json,hitl.log}
 - 共享模块：lib/hitl-store.js（插件 / 网关 / CLI 三端唯一实现）
-- 网关插件：C:/openclaw-runtime/plugins/dsh-bridge/index.js
-- DSH 插件：~/.dsh/profiles/{web,headless}/node_modules/dsh-wechat-hitl/
+- 网关插件：C:/openclaw-runtime/plugins/dsh-bridge/index.js（junction → 仓库 gateway/dsh-bridge/，2026-11-02 起）
+- DSH 插件：~/.dsh/profiles/{web,headless}/node_modules/dsh-wechat-hitl/（junction → 仓库 pkg/dsh-wechat-hitl/，2026-11-02 起）
+- 跨设备/重装一键：pwsh -NoProfile -File dsh-wechat-hitl/tools/install-channel.ps1（重建 junction + 钉模型 + 重启网关）
 - 方案与 runbook：dsh-wechat-hitl/PLAN-wechat-hitl.md、70-WorkSpace/微信主动推送与人工确认回环说明.md

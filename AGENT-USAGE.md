@@ -102,3 +102,17 @@ node tools\switch-hitl.mjs --show    # 三态开关与挂载状态
 边界：绑定到「正被别的宿主占用写锁」的会话时，headless 兜底会失败并如实回报；
 活着的 Web 会话要能进程内注入，需 DSH Web 已重启加载当前插件代码。
 
+## 部署拓扑与跨设备安装（2026-11-02 起）
+
+| 部件 | 唯一源（本仓库） | 部署位（挂载/副本） |
+|---|---|---|
+| DSH 侧插件入口 | pkg/dsh-wechat-hitl/ | junction：profiles/web、headless 两处 node_modules/dsh-wechat-hitl |
+| 网关插件 dsh-bridge | gateway/dsh-bridge/（index.js + 两个 manifest） | junction：C:/openclaw-runtime/plugins/dsh-bridge |
+| 共享状态层 lib | lib/hitl-store.js | 两侧入口按相对路径 import（junction realpath 指回仓库），不再硬编码 D 盘路径 |
+| 运行状态 | state/（gitignore） | 不部署；随 dsh-backup 的 openclaw 段备份四个有效文件 |
+| OpenClaw 模型钉死/插件开关 | tools/set-openclaw-model.mjs 写 ~/.openclaw/openclaw.json | 随 dsh-backup private 段备份/恢复 |
+
+- 跨设备/重装一键：pwsh -NoProfile -File tools/install-channel.ps1（重建 junction → 钉模型 → 重启网关；前置条件见脚本头注释）。
+- OpenClaw runtime 本体（node.exe、openclaw 包、微信通道插件）不搬进仓库：它是设备级基础设施，由 OpenClaw 自更新管理；仓库里维护的是我们写的插件与配置脚本。
+- dsh 一键备份已含 openclaw 配置面（2026-11-02 起）：openclaw/ 段（启动器、自启钩子、通道状态四文件、部署 junction 清单）+ private/openclaw/ 段（openclaw.json、微信账号绑定）；恢复时写回并提示执行 install-channel.ps1 与 restart-gateway.ps1。
+

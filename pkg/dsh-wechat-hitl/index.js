@@ -17,8 +17,12 @@
  *
  * 本插件不改 DSH 本体，不依赖第三方包，所有跨进程状态走共享状态文件（hitl-store.js）。
  */
-// 共享状态层唯一实现位于 DSH 工作区；整目录再搬家时只需改这一行，或用 DSH_WECHAT_HITL_LIB 覆盖。
-const STORE_URL = new URL(process.env.DSH_WECHAT_HITL_LIB || "file:///D:/src/dsh/dsh-wechat-hitl/lib/hitl-store.js");
+// 共享状态层唯一实现：优先用与本文件相对的仓库 lib（node 解析 junction 后 import.meta.url 即真实仓库路径），
+// 找不到再回落旧绝对路径；仍可用 DSH_WECHAT_HITL_LIB 覆盖（2026-11-02 去掉对 D 盘固定路径的硬依赖）。
+import { existsSync } from "node:fs";
+const REL_LIB = new URL("../../lib/hitl-store.js", import.meta.url);
+const STORE_URL = new URL(process.env.DSH_WECHAT_HITL_LIB
+  || (existsSync(REL_LIB) ? REL_LIB.href : "file:///D:/src/dsh/dsh-wechat-hitl/lib/hitl-store.js"));
 
 export const name = "wechat-hitl";
 

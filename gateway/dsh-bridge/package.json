@@ -1,0 +1,6 @@
+{
+  "name": "dsh-bridge",
+  "version": "0.4.1",
+  "type": "module",
+  "openclaw": { "extensions": ["./index.js"] }
+}

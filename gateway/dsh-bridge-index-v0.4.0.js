@@ -240,7 +240,7 @@ async function relayToBoundSession(text, target, binding) {
   const request = hitl.buildMessageRequest({ sessionId: binding.sessionId, text, context: "来自微信 · 绑定会话" });
   dbg({ hitl: "relay-created", id: request.id, sessionId: binding.sessionId });
   const delivered = await waitDelivery(request.id, DELIVERY_WAIT_MS);
-  if (delivered?.deliveredAt && String(delivered.delivery ?? "").startsWith("injected")) {
+  if (delivered?.deliveredAt && /^(injected|in-turn)/.test(String(delivered.delivery ?? ""))) {
     return "已转给会话 " + binding.sessionId.replace(/^session-/, "").slice(0, 8) + "，它跑完会把结果推给你。";
   }
   dbg({ hitl: "relay-fallback", id: request.id, delivery: delivered?.delivery ?? null });
@@ -311,7 +311,7 @@ async function handleCodedReply(text, target) {
   const request = routed.request;
   const updated = hitl.markAnswered(request.id, { ...routed.option, raw: text }, "wechat") ?? request;
   const delivered = await waitDelivery(request.id, DELIVERY_WAIT_MS);
-  if (delivered?.deliveredAt && String(delivered.delivery ?? "").startsWith("injected")) {
+  if (delivered?.deliveredAt && /^(injected|in-turn)/.test(String(delivered.delivery ?? ""))) {
     return hitl.formatResolved(updated) + "\n（答复已注入原会话，正在继续执行。）";
   }
   const prompt = hitl.buildContinuationPrompt(updated);
@@ -362,7 +362,7 @@ async function handleHumanReply(text, target) {
     return hitl.formatResolved(updated) + "\n（该批准已在原回合内生效，DSH 会继续执行。）";
   }
   const delivered = await waitDelivery(request.id, DELIVERY_WAIT_MS);
-  if (delivered?.deliveredAt && String(delivered.delivery ?? "").startsWith("injected")) {
+  if (delivered?.deliveredAt && /^(injected|in-turn)/.test(String(delivered.delivery ?? ""))) {
     return hitl.formatResolved(updated) + "\n（答复已注入原会话，正在继续执行。）";
   }
   // 兜底：原会话不在活的宿主里（或注入失败）→ 直接 headless 续跑
@@ -401,7 +401,7 @@ export default definePluginEntry({
     const PUMP_START_DELAY_MS = 45000;
     setInterval(() => { pumpOutbox().catch(() => {}); }, OUTBOX_POLL_MS);
     setTimeout(() => { pumpOutbox().catch(() => {}); }, PUMP_START_DELAY_MS);
-    dbg({ boot: "dsh-bridge 0.4.0", outboxPollMs: OUTBOX_POLL_MS, pumpStartDelayMs: 45000,
+    dbg({ boot: "dsh-bridge 0.4.1", outboxPollMs: OUTBOX_POLL_MS, pumpStartDelayMs: 45000,
       // 诊断：泵读的到底是哪个 state 文件（路径错位时会静默空转，必须留痕）
       hitlStateDir: (() => { try { return hitl?.PATHS?.stateDir ?? null; } catch { return "n/a"; } })(),
       hitlStateFile: (() => { try { return hitl?.STATE_FILE ?? null; } catch { return "n/a"; } })(),

@@ -81,6 +81,16 @@ cfg.plugins ??= {};
 cfg.plugins.entries ??= {};
 cfg.plugins.entries.anthropic = { ...(cfg.plugins.entries.anthropic ?? {}), enabled: false };
 
+// 网关侧插件挂载点：openclaw.json 的 plugins.load.paths 必须包含 dsh-bridge 的 junction 位置，
+// 否则网关加载不到 dsh-bridge，微信通道整个失联（2026-11-02 补，随 install-channel 一起幂等）。
+const bridgeMount = ((process.env.OPENCLAW_RUNTIME_DIR || "C:/openclaw-runtime").replace(/\/$/, "") + "/plugins/dsh-bridge").replace(/\//g, "\\");
+cfg.plugins.load ??= { paths: [] };
+cfg.plugins.load.paths ??= [];
+if (!cfg.plugins.load.paths.some((x) => String(x).toLowerCase() === bridgeMount.toLowerCase())) {
+  cfg.plugins.load.paths.push(bridgeMount);
+  console.log("[load.paths] + " + bridgeMount);
+}
+
 writeFileSync(CONFIG, JSON.stringify(cfg, null, 2) + "\n", "utf8");
 
 // 自检：重新解析 + 关键字段断言 + 确认没有明文 key 落进配置

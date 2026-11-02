@@ -20,6 +20,9 @@ param(
   [switch]$SkipGatewayRestart,
   [switch]$SkipModelPin
 )
+# openclaw runtime 根目录：默认 C:openclaw-runtime，装在别处时设 OPENCLAW_RUNTIME_DIR 环境变量
+$RuntimeRoot = $env:OPENCLAW_RUNTIME_DIR
+if (-not $RuntimeRoot) { $RuntimeRoot = 'C:\openclaw-runtime' }
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)   # tools/.. = repo root
 Write-Host "[install-channel] repo root = $repo"
@@ -46,9 +49,9 @@ foreach ($prof in $ProfileNames) {
   Write-Ok2 $mount
 }
 
-# 2) 网关侧 junction
-$runtimePlugin = 'C:\openclaw-runtime\plugins\dsh-bridge'
-if (Test-Path 'C:\openclaw-runtime') {
+# 2) 网关侧 junction（位置跟随 runtime 根目录）
+$runtimePlugin = Join-Path $RuntimeRoot 'plugins\dsh-bridge'
+if (Test-Path $RuntimeRoot) {
   $target2 = Join-Path $repo 'gateway\dsh-bridge'
   $i2 = Get-Item $runtimePlugin -Force -ErrorAction SilentlyContinue
   if ($i2 -and $i2.LinkType -eq 'Junction') { Write-Host "[OK] $runtimePlugin 已是 junction" }
@@ -62,7 +65,7 @@ if (Test-Path 'C:\openclaw-runtime') {
     Write-Ok2 $runtimePlugin
   }
 } else {
-  Write-Warning 'C:\openclaw-runtime 不存在：先安装 OpenClaw runtime 再重跑本脚本（网关侧挂载跳过）'
+  Write-Warning ("{0} 不存在：先安装 OpenClaw runtime 再重跑本脚本（网关侧挂载跳过）" -f $RuntimeRoot)
 }
 
 # 3) OpenClaw 模型钉死（写 ~/.openclaw/openclaw.json，自动备份；可用 -SkipModelPin 跳过）
@@ -83,4 +86,9 @@ Write-Host @'
   2) 微信发「推送状态」→ 收到带 会话码/识别码/R 编号 的回执
   3) state/hitl.log 出现 outbox-sent
   4) 重启 DSH Web 并新开会话（DSH 侧插件在模块缓存里）
+[install-channel] 路径与既有配置不同的设备：设环境变量后重跑
+  OPENCLAW_RUNTIME_DIR   runtime 根目录（默认 C:openclaw-runtime；网关插件 junction 跟随）
+  DSH_WECHAT_HITL_RUNTIME_ROOT / _NODE / _OPENCLAW_MJS   lib 里 runtime 路径（见 lib/hitl-store.js PATHS 段）
+  DSH_WECHAT_HITL_TARGET / _WORKDIR / _GATEWAY_PORT / _DSH_HOME   微信 target / 会话工作区 / 端口 / DSH home
+  DSH_BRIDGE_DSH_BIN / DSH_BRIDGE_WORKDIR   网关 headless 兜底用的 DSH 可执行与工作区
 '@

@@ -14,14 +14,15 @@
  */
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
-const MAP_FILE = "C:/Users/wwm_1/.openclaw/state/dsh-bridge-sessions.json";
-const DEBUG_FILE = "C:/Users/wwm_1/.openclaw/state/dsh-bridge-debug.log";
-const NODE = "C:/openclaw-runtime/node.exe";
-const OPENCLAW = "C:/openclaw-runtime/openclaw.cmd";
-const DSH_BIN = "C:/Users/wwm_1/AppData/Local/nvm/v24.18.0/node_modules/@deepseek-ai/dsh/lib/bin.js";
-const WORKDIR = "D:/nutstore/1.logseq";
+const OPENCLAW_RUNTIME_DIR = process.env.OPENCLAW_RUNTIME_DIR || "C:/openclaw-runtime";
+const USER_HOME = process.env.USERPROFILE || homedir();
+const MAP_FILE = USER_HOME + "/.openclaw/state/dsh-bridge-sessions.json";
+const DEBUG_FILE = USER_HOME + "/.openclaw/state/dsh-bridge-debug.log";
+const NODE = OPENCLAW_RUNTIME_DIR + "/node.exe";
+const OPENCLAW = OPENCLAW_RUNTIME_DIR + "/openclaw.cmd";
 const FAST_PATH_MS = 150000;      // 150s 内完成则直接回复
 const HARD_CAP_MS = 20 * 60000;   // 异步任务 20 分钟硬上限
 // 共享状态层唯一实现（与 DSH 侧插件、CLI 同一份）；可用 DSH_WECHAT_HITL_LIB 覆盖。

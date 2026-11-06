@@ -222,20 +222,21 @@ async function handleControlCommand(text) {
     hitl.clearBinding("wechat");
     return "已取消绑定，后续微信消息走默认的 wx- 会话。";
   }
-  const nameMatch = raw.match(/^\/(?:name|命名)\s*([0-9]{1,2})\s*(.+)$/i);
+  const nameMatch = raw.match(/^\/(?:name|命名)\s*([0-9]{1,3})\s*(.+)$/i);
   if (nameMatch) {
     const hit = hitl.sessionByCode(nameMatch[1]);
     if (!hit) return "没有回复id " + nameMatch[1] + "，发 /l 看清单。";
     hitl.setSessionLabel(hit.sessionId, nameMatch[2].trim());
     return "已把回复id " + nameMatch[1] + " 命名为「" + nameMatch[2].trim() + "」。";
   }
-  const bindMatch = raw.match(/^(?:\/(?:s|bind)|切|绑定)\s*([0-9]{1,2})$/i);
+  const bindMatch = raw.match(/^(?:\/(?:s|bind)|切|绑定)\s*([0-9]{1,3})$/i);
   if (bindMatch) {
-    const sessions = hitl.listSessions(8);
-    const picked = hitl.pickSession(bindMatch[1], sessions);
-    if (!picked) return "没找到第 " + bindMatch[1] + " 个会话，发 /l 看列表。";
-    hitl.setBinding(picked.sessionId, "微信驱动", "wechat");
-    return "已绑定到会话 " + picked.sessionId.replace(/^session-/, "").slice(0, 8) + "。之后你发的普通消息都会转给这个会话；发 /a 取消。";
+    // 与 /l 同源，且按「清单第一列的会话码」命中（不再按第 N 行猜），
+    // 否则会出现「看到 50、绑到第 50 行」（2026-11-06 修）。
+    const picked = hitl.resolveBindTarget(bindMatch[1], hitl.listSessionsV2(20));
+    if (!picked || picked.ambiguous) return "没找到会话 " + bindMatch[1] + "，发 /l 看列表（用左列会话码）。";
+    hitl.setBinding(picked.sessionId, picked.label || "微信驱动", "wechat");
+    return "已绑定：码 " + picked.code + " · " + (picked.label || "(未命名)") + "。之后普通消息都会转给它；发 /a 取消。";
   }
   return null;
 }
@@ -279,6 +280,12 @@ async function handleCodedReply(text, target) {
   // 必须排在会话码路由之前，但解析是「整条消息严格匹配」，所以不会抢走「1 帮我跑测试」这类驱动。
   const pushCmd = typeof hitl.parsePushCommand === "function" ? hitl.parsePushCommand(text) : null;
   if (pushCmd) {
+    if (pushCmd.target === "decision") {
+      if (pushCmd.action === "status") return hitl.describeDecisionPush();
+      const result = hitl.setDecisionPush(pushCmd.action === "on", { by: "wechat", reason: "微信侧指令" });
+      return (result.to ? "🟢 权限/决策询问：已开" : "🟡 权限/决策询问：已关") +
+        "（" + (result.from ? "开" : "关") + " → " + (result.to ? "开" : "关") + "）";
+    }
     if (pushCmd.action === "status") return hitl.describeResultPush();
     const result = hitl.setResultPush(pushCmd.action === "on", { by: "wechat", reason: "微信侧指令" });
     return (result.to ? "🟢 结果推送：已开" : "🟡 结果推送：已关") +

@@ -148,3 +148,22 @@ node tools\switch-hitl.mjs --show    # 三态开关与挂载状态
 - **bot 不能列 p2p 聊天**：`im +chat-list --types p2p` 只支持 user 身份；拿私聊 chat_id 只能从入站事件里取（`lark-cli event consume im.message.receive_v1 --max-events 1 --timeout 3m`，注意 stdin 不能提前关闭）。
 - **新增应用的标准动作**：`pwsh -File tools/init-feishu-app.ps1`（browser 模式走浏览器授权，secret 模式不回显粘贴），落独立目录后用 `restart-feishu-daemon.ps1 -ConfigDir <dir>` 切换。
 
+## 审批 / 提升权限的优先级（2026-11-08）
+
+**问题**：DSH Web 的 `api-remotes` 会注册 `approval/request` 的浏览器转发器，且插件排在它后面；
+瀑布事件第一个不 `next()` 的监听器即决定结果，所以审批被浏览器面板接管，飞书收不到「提升权限」。
+
+**修复**：插件用 `prepend` 把审批监听器放进瀑布最外层；默认 `approval.priority: channel-first`。
+
+| 配置（profiles/web/cordis.patch.yml 的插件 config） | 行为 |
+|---|---|
+| `approval.priority: channel-first`（默认） | 飞书先接审批并阻塞等回复；推不出去/超时才回 DSH 前端 |
+| `approval.priority: ui-first` | DSH 前端先接；没有浏览器客户端时飞书兜底 |
+| 三态开关 `running` | 通道接审批 |
+| 三态开关 `paused` / `stopped` | 立即交回前端，回合不卡死 |
+
+改 `priority` 要重启加载插件的 DSH Web 进程；三态开关仍是热更新。
+沙箱升权文案固定为「【提升权限】+ 目标档位 + 原因」，不再把
+`escalate sandbox to danger-full-access: …` 原样推给用户。根因与证据见
+[FIX-20261108-approval-request-precedence.md](FIX-20261108-approval-request-precedence.md)。
+

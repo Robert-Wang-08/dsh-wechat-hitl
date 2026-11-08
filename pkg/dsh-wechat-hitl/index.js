@@ -44,6 +44,46 @@ function sessionCwd(session) {
   return typeof cwd === "string" && cwd.length > 0 ? cwd : undefined;
 }
 
+/** 沙箱权限档位的人话名：审批文案必须说清「提升到哪一档」。 */
+const SANDBOX_MODE_LABELS = {
+  "read-only": "只读",
+  "workspace-write": "工作区可写",
+  "danger-full-access": "完全访问",
+};
+
+/**
+ * 审批请求的人话文案。
+ *
+ * 沙箱升权的 reason 固定为 `escalate sandbox to <mode>: <justification>`
+ * （见 dsh-sandbox/src/escalation.ts 的 approveEscalation），原样推给用户
+ * 既像报错又看不出要提升到哪一档。这里翻译成「提升权限」标题 + 目标档位 + 原因。
+ * 其它 dangerously 审批保持原样。
+ */
+function approvalCopy(req) {
+  const tool = String(req?.toolName ?? "unknown");
+  const reason = String(req?.reason ?? "").trim();
+  const escalation = reason.match(/^escalate sandbox to ([a-z-]+):\s*([\s\S]*)$/i);
+  if (escalation) {
+    const mode = escalation[1].toLowerCase();
+    const why = escalation[2].trim();
+    const label = SANDBOX_MODE_LABELS[mode] ?? mode;
+    return {
+      title: "提升权限",
+      recap: "提升权限 → " + label + "（" + mode + "）",
+      question: [
+        "工具：" + tool,
+        "请求权限：" + label + "（" + mode + "）",
+        why ? "原因：" + why : "原因：（未提供）",
+      ].join("\n"),
+    };
+  }
+  return {
+    title: "危险操作需要批准",
+    recap: "批准：" + tool,
+    question: tool + (reason ? "：" + reason : ""),
+  };
+}
+
 export function apply(ctx, config = {}) {
   const cfg = {
     enabled: true,
@@ -52,12 +92,13 @@ export function apply(ctx, config = {}) {
     maxTextChars: 900,
     pollMs: 1500,
     // 2026-10-29：5 分钟太短（用户常在 5 分钟边缘回复，晚几十秒就撞过期），改为 10 分钟。
-  approval: { enabled: true, timeoutMs: 10 * 60 * 1000, options: ["允许一次", "拒绝"] },
+    // priority：channel-first = 通道优先；ui-first = DSH 前端优先（通道只处理前端没接住的情况）。
+    approval: { enabled: true, timeoutMs: 10 * 60 * 1000, options: ["允许一次", "拒绝"], priority: "channel-first" },
     excludeSessionIdPrefixes: ["wx-"],
     excludeKinds: [],
     ...config,
   };
-  cfg.approval = { ...{ enabled: true, timeoutMs: 10 * 60 * 1000, options: ["允许一次", "拒绝"] }, ...(config.approval ?? {}) };
+  cfg.approval = { ...{ enabled: true, timeoutMs: 10 * 60 * 1000, options: ["允许一次", "拒绝"], priority: "channel-first" }, ...(config.approval ?? {}) };
 
   const skipByEnv = process.env.DSH_WECHAT_HITL_SKIP === "1";
   const log = (obj) => store.log({ plugin: "wechat-hitl", ...obj });
@@ -164,10 +205,17 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  // ── 审批门禁：微信阻塞式批准 ──────────────────────────────────────────────
-  ctx.on("approval/request", async (req, next) => {
+  // ── 审批门禁：通道阻塞式批准 ──────────────────────────────────────────────
+  //
+  // 注册顺序就是优先级：DSH Web 的 api-remotes 会在启动后注册 approval/request
+  // 的浏览器转发器（--dump-config 里排在插件之后），旧代码按默认顺序注册会排在
+  // 它后面，请求先被浏览器面板接管，通道永远收不到「提升权限」（2026-11-08 实测：
+  // session af71bbe5 有 approval/asked，hitl.log 却没有 approval-ask）。prepend 把
+  // 通道放到瀑布最外层；priority=ui-first 时保持浏览器优先。
+  const approvalPriority = String(cfg.approval.priority ?? "channel-first").toLowerCase() === "ui-first" ? "ui-first" : "channel-first";
+  const approvalHandler = async (req, next) => {
     if (!cfg.approval.enabled) return next();
-    // 三态开关：只有 running 才把审批推到微信并阻塞等待。
+    // 三态开关：只有 running 才把审批推到通道并阻塞等待。
     // paused / stopped 必须立刻 next() 交回 DSH 原生界面处理，否则暂停就会把回合卡死。
     const control = store.getControl();
     if (control.state !== "running") {
@@ -180,17 +228,18 @@ export function apply(ctx, config = {}) {
     // TTL 必须等于实际等待窗口：以前用默认 30 分钟 TTL 却只等 5 分钟，
     // 推送写着「有效期 30 分钟」，用户在 5 分钟后就被判过期（2026-10-29 审计）。
     const approvalTimeoutMs = Math.max(5000, Number(cfg.approval.timeoutMs) || 600000);
+    const copy = approvalCopy(req);
     const request = store.createRequest({
       sessionId: session.id,
       mode: "approval",
       kind: "approval",
-      title: "危险操作需要批准",
-      question: String(req?.toolName ?? "unknown") + (req?.reason ? "：" + String(req.reason) : ""),
+      title: copy.title,
+      question: copy.question,
       options: cfg.approval.options,
       context: sessionCwd(session) ?? "",
     }, approvalTimeoutMs);
     log({ stage: "approval-ask", id: request.id, tool: req?.toolName, sessionId: session.id, ttlMs: approvalTimeoutMs });
-    const pushed = await store.pushWechat(store.formatAsk(request));
+    const pushed = await store.pushWechat(store.formatAsk(request), undefined, { sessionId: session.id, kind: "approval", recap: copy.recap });
     if (!pushed.ok) {
       log({ stage: "approval-push-failed", id: request.id, output: pushed.output });
       store.markStatus(request.id, "cancelled");
@@ -212,7 +261,8 @@ export function apply(ctx, config = {}) {
     store.markStatus(request.id, "expired");
     await store.pushWechat("⌛ 批准请求已过期（" + Math.round((Number(cfg.approval.timeoutMs) || 600000) / 60000) + " 分钟无回复），已交回 DSH 界面处理。", undefined, { sessionId: request.sessionId });
     return next();
-  });
+  };
+  ctx.on("approval/request", approvalHandler, { prepend: approvalPriority === "channel-first" });
 
   // ── 会话事件 ─────────────────────────────────────────────────────────────
   ctx.on("session/disposed", (session) => {
@@ -342,6 +392,6 @@ export function apply(ctx, config = {}) {
     pid: process.pid,
     profile: process.env.DSH_PROFILE ?? null,
     hasSessionController: typeof ctx.get?.("sessionController") === "object",
-    cfg: { notifyOnTurnEnd: cfg.notifyOnTurnEnd, approval: cfg.approval.enabled, excludes: cfg.excludeSessionIdPrefixes },
+    cfg: { notifyOnTurnEnd: cfg.notifyOnTurnEnd, approval: cfg.approval.enabled, approvalPriority, excludes: cfg.excludeSessionIdPrefixes },
   });
 }

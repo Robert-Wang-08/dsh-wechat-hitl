@@ -188,3 +188,68 @@ test("沙箱升权翻译成「提升权限」文案", async () => {
   assert.equal(await promise, "rejected");
 });
 
+test("decisionPush 关闭：权限提升审批不建请求，直接交回前端", async () => {
+  const ctx = fakeCtx();
+  const store = await import("../lib/hitl-store.js");
+  store.setDecisionPush(false, { by: "test" });
+  try {
+    apply(ctx, { minTurnMs: 0, pollMs: 0, excludeSessionIdPrefixes: ["wx-"], approval: { enabled: true, timeoutMs: 8000, options: ["允许一次", "拒绝"], priority: "channel-first" } });
+    const session = mainSession("session-test-decision-off-approval");
+    const handlers = ctx.listeners.get("approval/request");
+    const outcome = await handlers[0]({ agent: { session }, toolName: "pwsh", reason: "删除文件" }, () => Promise.resolve("next-outcome"));
+    assert.equal(outcome, "next-outcome");
+    const pending = store.listPending().filter((item) => item.sessionId === "session-test-decision-off-approval");
+    assert.equal(pending.length, 0, "开关关闭时通道不应建请求");
+  } finally {
+    store.setDecisionPush(true, { by: "test" });
+  }
+});
+
+test("decisionPush 关闭：逐个询问不建请求、不推送", async () => {
+  const ctx = fakeCtx();
+  const store = await import("../lib/hitl-store.js");
+  store.setDecisionPush(false, { by: "test" });
+  try {
+    apply(ctx, { minTurnMs: 0, pollMs: 0, excludeSessionIdPrefixes: ["wx-"] });
+    const session = mainSession("session-test-decision-off-question");
+    const before = (store.loadState().outbox ?? []).length;
+    const t0 = Date.now();
+    ctx.emit("session/event", session, { type: "turn/start", time: t0, data: { turn: 1 } });
+    for (const name of ["ask_user_question", "request_user_input"]) {
+      ctx.emit("session/event", session, {
+        type: "tool/call",
+        data: { turn: 1, callId: "call-" + name, name, arguments: JSON.stringify({ questions: [{ question: "选 A 还是 B？", options: [{ label: "A" }, { label: "B" }] }] }) },
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const pending = store.listPending().filter((item) => item.sessionId === "session-test-decision-off-question");
+    assert.equal(pending.length, 0, "开关关闭时不应建询问请求");
+    assert.equal((store.loadState().outbox ?? []).length, before, "开关关闭时不应推送询问");
+  } finally {
+    store.setDecisionPush(true, { by: "test" });
+  }
+});
+
+test("decisionPush 关闭：异常结束不推失败通知；打开时推", async () => {
+  const store = await import("../lib/hitl-store.js");
+  const runTurn = async (sessionId, decisionOn) => {
+    store.setDecisionPush(decisionOn, { by: "test" });
+    const ctx = fakeCtx();
+    apply(ctx, { minTurnMs: 0, pollMs: 0, excludeSessionIdPrefixes: ["wx-"] });
+    const session = mainSession(sessionId);
+    const t0 = Date.now();
+    ctx.emit("session/event", session, { type: "turn/start", time: t0, data: { turn: 1 } });
+    ctx.emit("session/event", session, { type: "turn/end", time: t0 + 5000, data: { turn: 1, reason: { kind: "error" } } });
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    return (store.loadState().outbox ?? []).filter((entry) => entry.sessionId === sessionId);
+  };
+  try {
+    assert.equal((await runTurn("session-test-fail-off", false)).length, 0, "开关关闭时失败通知不应推送");
+    const on = await runTurn("session-test-fail-on", true);
+    assert.equal(on.length > 0, true, "开关打开时应推送失败通知");
+    assert.match(on[on.length - 1].text, /异常结束/);
+  } finally {
+    store.setDecisionPush(true, { by: "test" });
+  }
+});
+

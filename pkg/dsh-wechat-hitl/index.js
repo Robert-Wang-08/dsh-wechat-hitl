@@ -222,6 +222,11 @@ export function apply(ctx, config = {}) {
       log({ stage: "approval-delegated-by-switch", state: control.state, tool: req?.toolName ?? null });
       return next();
     }
+    // REQ-003：权限/决策询问独立开关。关闭时审批直接交回 DSH 前端，不建请求、不推送。
+    if (typeof store.isDecisionPushEnabled === "function" && !store.isDecisionPushEnabled()) {
+      log({ stage: "approval-delegated-by-decision-switch", state: control.state, tool: req?.toolName ?? null });
+      return next();
+    }
     const session = req?.agent?.session;
     if (excluded(session)) return next();
     if (Array.isArray(cfg.excludeKinds) && cfg.excludeKinds.includes(req?.toolName)) return next();
@@ -319,9 +324,16 @@ export function apply(ctx, config = {}) {
       order += 1;
       const entry = entryFor(sessionId, turn);
       entry.lastToolCall = { order };
-      if (data.name === "ask_user_question") {
+      const questionToolName = String(data.name ?? data.tool?.name ?? data.call?.name ?? "");
+      if (questionToolName === "ask_user_question" || questionToolName === "request_user_input") {
+        // DSH UI 对 ask_user_question 与 request_user_input 都表示交互式询问。
         // 暂停期间不建待确认请求（推送层还会再拦一次），避免留下必然过期的悬空请求
         if (store.getControl().state !== "running") { log({ stage: "question-skipped-by-switch", state: store.getControl().state }); return; }
+        // REQ-003：权限/决策询问开关关闭时不建请求、不推送；前端仍按自己的事件链处理。
+        if (typeof store.isDecisionPushEnabled === "function" && !store.isDecisionPushEnabled()) {
+          log({ stage: "question-skipped-by-decision-switch", state: store.getControl().state });
+          return;
+        }
         let args = {};
         try { args = typeof data.arguments === "string" ? JSON.parse(data.arguments) : (data.arguments ?? {}); } catch { args = {}; }
         const questions = Array.isArray(args.questions) ? args.questions : [];
@@ -337,7 +349,7 @@ export function apply(ctx, config = {}) {
           context: sessionCwd(session) ?? "",
         });
         awaitingTurn.set(sessionId, true);
-        store.pushWechat(store.formatAsk(request), undefined, { sessionId: session.id }).catch((error) => log({ stage: "question-push", error: String(error) }));
+        store.pushWechat(store.formatAsk(request), undefined, { sessionId: session.id, kind: "decision" }).catch((error) => log({ stage: "question-push", error: String(error) }));
         log({ stage: "question-ask", id: request.id, sessionId: session.id, options: options.length });
       }
       return;
@@ -357,7 +369,31 @@ export function apply(ctx, config = {}) {
       if (!cfg.notifyOnTurnEnd) return;
       if (store.getControl().state !== "running") { log({ stage: "turnend-skipped-by-switch", state: store.getControl().state }); return; }
       if (wasAwaiting) return;
-      if (data.reason?.kind !== "completed") return;
+      // 失败通知属于「决策类」：受权限/决策开关约束，不受结果推送开关影响。
+      // 以前这里直接 return，异常结束（error/aborted）在飞书上完全静默。
+      if (data.reason?.kind !== "completed") {
+        const reasonKind = String(data.reason?.kind ?? "unknown");
+        if (typeof store.isDecisionPushEnabled === "function" && !store.isDecisionPushEnabled()) {
+          log({ stage: "turn-failed-suppressed", sessionId, turn, reasonKind, why: "decision-push-off" });
+          return;
+        }
+        const seconds = entry !== undefined && entry.startTime !== null && typeof event.time === "number"
+          ? Math.round((event.time - entry.startTime) / 1000)
+          : null;
+        const code = store.sessionCode(sessionId);
+        const sid = String(sessionId).replace(/^session-/, "").slice(0, 8);
+        const notice = [
+          "阻塞：本轮异常结束（" + reasonKind + "）。",
+          "────────────",
+          (code === null ? "" : "会话码 " + code + "　") + "会话 " + sid,
+          "结束原因：" + reasonKind,
+          (seconds === null ? "" : "已运行 " + seconds + " 秒"),
+          store.turnEndHint(sessionId, code, { wide: store.currentChannel() === "feishu" }),
+        ].filter((line) => line !== "").join("\n");
+        store.pushWechat(notice, undefined, { sessionId, kind: "decision" }).catch((error) => log({ stage: "turn-failed-push", error: String(error) }));
+        log({ stage: "turn-failed-notify", sessionId, turn, reasonKind });
+        return;
+      }
       const durationMs = entry !== undefined && entry.startTime !== null && typeof event.time === "number" ? Math.max(0, event.time - entry.startTime) : null;
       log({
         stage: "turn-end-eval",

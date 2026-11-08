@@ -86,20 +86,26 @@ line 2458 - id: wechat-hitl   name: dsh-wechat-hitl
 | `approval.priority` | `ui-first` | DSH 前端先接；前端没有客户端时通道兜底 |
 | `control.json` 的 `state` | `running` | 通道接审批并阻塞等回复 |
 | `control.json` 的 `state` | `paused` / `stopped` | 立即 `next()`，前端处理，回合不卡死 |
+| `control.json` 的 `decisionPush` | `true`（默认） | 权限提升审批、逐个询问、失败通知都发通道 |
+| `control.json` 的 `decisionPush` | `false` | 这三类都不发；DSH 前端照常处理；回合摘要走 `resultPush`，不受影响 |
 
-改 `priority` 需要重启加载插件的 DSH Web 进程；三态开关仍是热更新（读 `state/control.json`）。
+改 `priority` 需要重启加载插件的 DSH Web 进程；三态开关与 `decisionPush` 是热更新
+（插件每次事件重新读 `state/control.json`）。飞书里发「权限推送关 / 权限推送开 /
+审批推送状态」即可切换；命令行等价 `node bin\\wx-hitl.mjs decision off|on|status`。
 
 ## 验证
 
 - `pkg/dsh-wechat-hitl` 新增回归用例（`test/plugin.test.mjs`）：
   - `channel-first` 时后注册的通道监听器带 `prepend`，浏览器转发器不被调用；
   - `ui-first` 时浏览器先接管，通道不建请求；
-  - `escalate sandbox to danger-full-access: …` 生成标题「提升权限」和目标档位文案。
-- `test/run-tests.ps1` 全套通过。
+  - `escalate sandbox to danger-full-access: …` 生成标题「提升权限」和目标档位文案；
+  - `decisionPush` 关闭时审批/逐个询问/失败通知都不建请求、不推送，打开时失败通知会推送。
+- `test/run-tests.ps1` 全套 72 条通过。
 - 未在本机重启 DSH Web 做真人点击验证（会打断正在跑的会话）；重启后可在任意会话触发一次
   `sandbox_permissions` 升权复核。
 
 ## 与工作区里未提交改动的关系
 
 本修复基于 `3101112`（当前 HEAD）。本机工作区另有 2026-11-08 14:57–15:23 的未提交改动
-（会话级推送控制 `/push`、`decisionPush`、失败通知等），不属于本修复范围；合并时按需处理。
+（会话级推送控制 `/push` 与 `PUSH-CONTROLS.md`），不属于本修复范围；`decisionPush` 与
+失败通知已在本 PR 内实现。

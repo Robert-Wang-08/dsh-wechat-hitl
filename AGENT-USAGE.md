@@ -167,3 +167,25 @@ node tools\switch-hitl.mjs --show    # 三态开关与挂载状态
 `escalate sandbox to danger-full-access: …` 原样推给用户。根因与证据见
 [FIX-20261108-approval-request-precedence.md](FIX-20261108-approval-request-precedence.md)。
 
+### 决策 / 失败通知开关
+
+`state/control.json` 的 `decisionPush`（默认开）控制三类消息：
+
+| 消息 | 受 `decisionPush` | 受 `resultPush` |
+|---|---|---|
+| 权限提升 / 危险操作审批 | 是 | 否 |
+| `ask_user_question` / `request_user_input` | 是 | 否 |
+| 回合异常结束的失败通知 | 是 | 否 |
+| 回合正常结束摘要 | 否 | 是 |
+
+关闭时这三类都不发飞书，DSH 前端仍按自己的事件链处理；回合结束的成功摘要不受影响。
+飞书里直接发「权限推送关 / 权限推送开 / 审批推送状态」即可；命令行等价：
+
+```powershell
+node bin\wx-hitl.mjs decision status
+node bin\wx-hitl.mjs decision off
+node bin\wx-hitl.mjs decision on
+```
+
+开关是热更新：插件每次事件重新读 `control.json`，不用重启 DSH。
+

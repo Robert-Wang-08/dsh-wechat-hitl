@@ -18,7 +18,8 @@ import {
   markStatus, formatAsk, formatResolved, formatAmbiguous, pushWechat, buildContinuationPrompt,
   runHeadlessTurn, parseNdjson, shortId, log,
   getControl, setControl, describeControl, CONTROL_STATES, loadState as loadStateSafe,
-  getResultPush, setResultPush, describeResultPush, parsePushCommand,
+  getResultPush, setResultPush, describeResultPush,
+  getDecisionPush, setDecisionPush, describeDecisionPush, describeChannelControl, parsePushCommand,
   getBinding, setBinding, clearBinding, listSessions, pickSession, formatSessionList, buildMessageRequest,
 } from "../lib/hitl-store.js";
 
@@ -119,6 +120,18 @@ if (command === "notify") {
   const result = setResultPush(on, { by: "cli", reason: "wx-hitl push " + arg });
   out((result.to ? "🟢 结果推送：已开" : "🟡 结果推送：已关") + "（" + (result.from ? "开" : "关") + " → " + (result.to ? "开" : "关") + "）");
   process.exit(0);
+} else if (command === "decision") {
+  // REQ-003：权限提升、逐个询问、失败通知的独立开关（结果摘要仍走 push）
+  const arg = String(args._[1] ?? args.state ?? "status").toLowerCase();
+  if (!["on", "off", "status", "开", "关"].includes(arg)) {
+    out(JSON.stringify({ ok: false, error: "用法：decision on|off|status" }));
+    process.exit(2);
+  }
+  if (arg === "status") { out(describeDecisionPush()); process.exit(0); }
+  const on = ["on", "开"].includes(arg);
+  const result = setDecisionPush(on, { by: "cli", reason: "wx-hitl decision " + arg });
+  out((result.to ? "🟢 权限/决策询问：已开" : "🟡 权限/决策询问：已关") + "（" + (result.from ? "开" : "关") + " → " + (result.to ? "开" : "关") + "）");
+  process.exit(0);
 } else if (command === "relay") {
   // 把一段文本转发进指定会话（微信之外的另一个驱动入口，便于脚本/测试）
   const text = typeof args.text === "string" ? args.text : "";
@@ -154,6 +167,9 @@ if (command === "notify") {
   const state = JSON.parse(JSON.stringify(loadStateSafe()));
   out(JSON.stringify({
     switch: { state: control.state, describe: describeControl(control), updatedAt: control.updatedAt, updatedBy: control.updatedBy, reason: control.reason ?? "" },
+    controls: describeChannelControl(),
+    decisionPush: getDecisionPush(),
+    resultPush: getResultPush(),
     sending: control.state === "running",
     outboxQueued: Array.isArray(state.outbox) ? state.outbox.length : 0,
     pendingCount: pending.length,
@@ -188,6 +204,6 @@ if (command === "notify") {
   markStatus(id, "cancelled");
   out(JSON.stringify({ ok: true, id }));
 } else {
-  out("用法: wx-hitl.mjs <notify|ask|status|resolve|continue|cancel> [选项]\n" + JSON.stringify(PATHS));
+  out("用法: wx-hitl.mjs <notify|ask|status|push|decision|resolve|continue|cancel> [选项]\n" + JSON.stringify(PATHS));
   process.exit(2);
 }

@@ -129,9 +129,12 @@ node tools\switch-hitl.mjs --show    # 三态开关与挂载状态
 - **技术内容保留**（2026-11-06）：飞书侧不再删 env 变量名/路径/标识符（`stripWechatNoise(..., { keepTechnical: true })`）——此前把 `LARKSUITE_CLI_CONFIG_DIR` 删掉，句子被掏空成「设的是 ，而只认 ，」。微信侧维持原口径。
 - **断行**：ASCII token（路径、变量名、`x.ps1`）内部不设断点；行首不允许出现 `，。；：` 等收尾标点（避头尾）。
 - **尾巴提示**（2026-11-06）：旧文案「回复 100 <内容> 可继续，细节在本会话」有歧义（"本会话"在飞书里既可指聊天也可指 DSH 会话），改为 `turnEndHint()`：飞书两行「回「100 你的话」继续 → DSH 会话 <sid>」+「本条是摘要，全文在 DSH 里」；微信一行「回 100 内容 可继续（摘要，全文在 DSH）」。旧宿主（未重启的 DSH Web 插件）产出的旧措辞由 `upgradeLegacyHint()` 在出口改写，不必重启 3080。
-- **one-line-recap 风格**：caveman 风格但说人话——只留结论与动作，不解释过程、不堆术语；**「❗要你定」永远排最前**（最多两条），其后才是「已做」「进度」。
+- **one-line-recap 风格**（2026-11-08 重做）：caveman 风格但说人话——只留结论与动作，不解释过程、不堆术语。recap 必须是消息第一行（`待定：/阻塞：/答：/无变更。`），从**最终回答**里取句：先挑决策句（`待定`），再挑阻塞句（`阻塞`），否则挑动作信息最多的一句；不再从抬头/会话号/标题行取材（旧版会产出「答：会话 1a2b3c4d。」这种空 recap）。recap 自带后，`applyOneLineRecap` 幂等，不会重复叠加。
+- **多级列表**（2026-11-08）：飞书正文改成「一、任务 / 二、结果」两级：任务取用户首句并压短；结果按「阻塞 → 待定 → 已做 → 进度 → 其他」分组，二级条目用 `　・` 缩进，决策/阻塞永远排最前。微信侧保留单层 `・` 条目（手机气泡窄，最多 3 条）。
+- **超长摘要**（2026-11-08）：命中会话字数上限时，`compactTurnEnd()` 先丢「其他 → 进度 → 已做 → 多余待定」，再缩短条目，保住 recap、标题与最关键的阻塞/待定，不再退回平铺压缩。
+
 - **清洗规则**：不再删除普通英文产品名（superagent / feishu 等），只删 camelCase、snake_case 和长 hex；`【已完成】` 这类小标题会被剥掉，避免「【风险】…」直接糊到脸上。
-- 实现：`distillForChannel(input, {channel, lineWidth})`（微信）、`trimForFeishu(input)`（飞书保结构）；`formatTurnEnd` 按 `currentChannel()` 选择宽度与上限；出口统一走 `outboxTag()`。
+- 实现：`formatTurnEnd` 内置 `oneLineRecap`（recap）+ `terseTask`（任务）+ `resultItems`（结果分组），按 `currentChannel()` 选择两级/单级版式；`distillForChannel`（微信）与 `trimForFeishu`（飞书平铺）仍保留给其他通知路径；出口统一走 `outboxTag()`。
 
 ## 飞书应用清单（2026-11-06 定稿）
 

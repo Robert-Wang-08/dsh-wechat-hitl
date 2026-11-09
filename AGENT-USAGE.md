@@ -87,12 +87,19 @@ node tools\switch-hitl.mjs --show    # 三态开关与挂载状态
 
 微信不只是收结果，也能当输入通道驱动某个会话：
 
-| 微信里发 | 作用 |
+| 渠道里发 | 作用 |
 |---|---|
-| /l 或 列表 | 列出本工作区可驱动的会话（按最近活跃排序，带编号） |
-| /s 3 或 切 3 | 绑定第 3 个会话，之后你的**普通消息**都会转发给它 |
-| /a 或 自动 | 取消绑定（回到默认 wx- 会话） |
-| 任意普通文本 | 已绑定时：转发进绑定会话并跑一轮；未绑定时：走默认 wx- 会话 |
+| /l 或 列表 | 列出**跨工作区**可驱动会话，左列就是会话码（微信与飞书同一实现） |
+| /s 50 或 切 50 | 按**会话码**绑定（码来自 /l 左列；也接受标题前缀唯一命中）。之后不带码的普通消息都进这条会话 |
+| /a 或 自动 | 取消绑定 |
+| /name 87 翻译r34 | 给某条会话起名，之后可 `/s 翻译r34` |
+| /who | 看当前通道、总闸、结果/决策两个子开关、当前落点 |
+| /new 远程日报 | **在已绑定的会话里新建一个会话**并自动绑定（方案 A：该会话调 `new_session`，用 `[[new_session:<id>]]` 回写） |
+| <码> 内容 | 定向驱动任意已登记会话（码 1–999） |
+| 任意普通文本 | 已绑定时：转发进绑定会话并跑一轮；未绑定时：提示先 /s |
+
+会话码空间 **1–999**，用满后回收最老的一条复用，并在回执里提示「码 X 已从『旧会话』回收」。
+飞书侧由 `feishu-daemon.mjs` 处理同一套指令（2026-11-06 补齐，此前只有文案没有实现）。
 
 命令行等价：node binwx-hitl.mjs sessions | bind --session 3 | bind --auto | relay --text "..."
 
@@ -115,4 +122,32 @@ node tools\switch-hitl.mjs --show    # 三态开关与挂载状态
 - 跨设备/重装一键：pwsh -NoProfile -File tools/install-channel.ps1（重建 junction → 钉模型 → 重启网关；前置条件见脚本头注释）。
 - OpenClaw runtime 本体（node.exe、openclaw 包、微信通道插件）不搬进仓库：它是设备级基础设施，由 OpenClaw 自更新管理；仓库里维护的是我们写的插件与配置脚本。
 - dsh 一键备份已含 openclaw 配置面（2026-11-02 起）：openclaw/ 段（启动器、自启钩子、通道状态四文件、部署 junction 清单）+ private/openclaw/ 段（openclaw.json、微信账号绑定）；恢复时写回并提示执行 install-channel.ps1 与 restart-gateway.ps1。
+
+## 回合结束摘要（2026-11-05 调整）
+
+- **放宽截断**（2026-11-06 再调）：飞书 22 行 / 每条 120 字 / 正文预算 1800 字，**长句不再整条丢弃**，按 `。！？；` → `，、` → 空格 边界截断并只补一个「…」；微信通道保持保守（4 行 / 40 字 / 1500 字），因为手机气泡窄。
+- **技术内容保留**（2026-11-06）：飞书侧不再删 env 变量名/路径/标识符（`stripWechatNoise(..., { keepTechnical: true })`）——此前把 `LARKSUITE_CLI_CONFIG_DIR` 删掉，句子被掏空成「设的是 ，而只认 ，」。微信侧维持原口径。
+- **断行**：ASCII token（路径、变量名、`x.ps1`）内部不设断点；行首不允许出现 `，。；：` 等收尾标点（避头尾）。
+- **尾巴提示**（2026-11-06）：旧文案「回复 100 <内容> 可继续，细节在本会话」有歧义（"本会话"在飞书里既可指聊天也可指 DSH 会话），改为 `turnEndHint()`：飞书两行「回「100 你的话」继续 → DSH 会话 <sid>」+「本条是摘要，全文在 DSH 里」；微信一行「回 100 内容 可继续（摘要，全文在 DSH）」。旧宿主（未重启的 DSH Web 插件）产出的旧措辞由 `upgradeLegacyHint()` 在出口改写，不必重启 3080。
+- **one-line-recap 风格**（2026-11-08 重做）：caveman 风格但说人话——只留结论与动作，不解释过程、不堆术语。recap 必须是消息第一行（`待定：/阻塞：/答：/无变更。`），从**最终回答**里取句：先挑决策句（`待定`），再挑阻塞句（`阻塞`），否则挑动作信息最多的一句；不再从抬头/会话号/标题行取材（旧版会产出「答：会话 1a2b3c4d。」这种空 recap）。recap 自带后，`applyOneLineRecap` 幂等，不会重复叠加。
+- **多级列表**（2026-11-08）：飞书正文改成「一、任务 / 二、结果」两级：任务取用户首句并压短；结果按「阻塞 → 待定 → 已做 → 进度 → 其他」分组，二级条目用 `　・` 缩进，决策/阻塞永远排最前。微信侧保留单层 `・` 条目（手机气泡窄，最多 3 条）。
+- **超长摘要**（2026-11-08）：命中会话字数上限时，`compactTurnEnd()` 先丢「其他 → 进度 → 已做 → 多余待定」，再缩短条目，保住 recap、标题与最关键的阻塞/待定，不再退回平铺压缩。
+
+- **清洗规则**：不再删除普通英文产品名（superagent / feishu 等），只删 camelCase、snake_case 和长 hex；`【已完成】` 这类小标题会被剥掉，避免「【风险】…」直接糊到脸上。
+- 实现：`formatTurnEnd` 内置 `oneLineRecap`（recap）+ `terseTask`（任务）+ `resultItems`（结果分组），按 `currentChannel()` 选择两级/单级版式；`distillForChannel`（微信）与 `trimForFeishu`（飞书平铺）仍保留给其他通知路径；出口统一走 `outboxTag()`。
+
+## 飞书应用清单（2026-11-06 定稿）
+
+同一台机器上并存多个 lark-cli 配置目录，**每个应用一个目录**，靠环境变量 `LARKSUITE_CLI_CONFIG_DIR`（或 `DSH_HITL_LARK_CONFIG_DIR`）切换；`hitl-store` 的解析顺序是 `DSH_HITL_LARK_CONFIG_DIR → LARKSUITE_CLI_CONFIG_DIR → ~/.lark-cli-dsh-superagent-feishu2 → ~/.lark-cli-dsh-superagent`。
+
+| 用途 | appId | 配置目录 | 机器人名 | 落点 | 状态 |
+|---|---|---|---|---|---|
+| **HITL**（会话状态 / 审批交互） | `cli_aa66f315697adc03` | `~/.lark-cli-dsh-superagent-feishu2` | robert的飞书 CLI | `oc_3c60d05ec9fdcde385c6a54a9b465084`（私聊） | ✅ 在用（feishu-daemon） |
+| **superagent**（工单） | `cli_aa67e4041a381c02` | `~/.lark-cli-hitl-aa67e4041a381c02` | superagent-飞书bot | `oc_eae25b93a93612f82042deb68704e2af`（私聊） | ✅ 收发已验通，待接 3082/3083 出口 |
+| 旧（停用） | `cli_aa6697691db89c00` | `~/.lark-cli-dsh-superagent` | —（被平台拦） | — | ❌ 每次调用 21001，勿用 |
+| 试验残留 | `cli_aa66fc2125f9dc14` | `~/.lark-cli-dsh-superagent-new` | — | — | ❌ 不用，可清 |
+
+- **open_id 按应用隔离**：同一个人的 open_id 在不同应用下不同（例：app3 下 `ou_fa4d5d4e…`），所以跨应用复用 open_id 会失败，必须各自取。
+- **bot 不能列 p2p 聊天**：`im +chat-list --types p2p` 只支持 user 身份；拿私聊 chat_id 只能从入站事件里取（`lark-cli event consume im.message.receive_v1 --max-events 1 --timeout 3m`，注意 stdin 不能提前关闭）。
+- **新增应用的标准动作**：`pwsh -File tools/init-feishu-app.ps1`（browser 模式走浏览器授权，secret 模式不回显粘贴），落独立目录后用 `restart-feishu-daemon.ps1 -ConfigDir <dir>` 切换。
 

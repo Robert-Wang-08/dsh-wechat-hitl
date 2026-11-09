@@ -164,7 +164,11 @@ test("识别码：多请求下只回码 -> need-option，提示怎么补全", ()
   // 2026-10-29：提示必须带空格。以前教用户写「21」，正好撞上 2 位会话码。
   assert.match(hint, new RegExp(String(req.handle) + " 1"), "提示要用「识别码 空格 选项」");
   assert.match(hint, new RegExp(String(req.handle) + " 2"));
-  assert.equal(new RegExp(String(req.handle) + "[0-9]").test(hint), false, "提示里不应再出现粘连写法");
+  // 2026-11-06：会话码扩容到 1..999 后，提示里会出现「会话码 127」这类合法内容，
+  // 全局 "识别码+数字" 断言会把 3 位码误判成粘连写法。改为只校验教学行。
+  const teachLine = hint.split("\n").find((line) => line.includes("识别码 空格 选项")) ?? "";
+  assert.ok(teachLine.length > 0, "提示里必须有教学行");
+  assert.equal(new RegExp(String(req.handle) + "[0-9]").test(teachLine), false, "教学行不应再出现粘连写法");
   store.markStatus(req.id, "cancelled");
 });
 

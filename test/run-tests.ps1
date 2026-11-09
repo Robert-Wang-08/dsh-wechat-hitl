@@ -22,7 +22,8 @@ try {
     'test/plugin.test.mjs',
     'test/switch.test.mjs',
     'test/lock.test.mjs',
-    'test/fix-20261101.test.mjs'
+    'test/fix-20261101.test.mjs',
+    'test/channel-command.test.mjs'
   )
   $code = 0
   foreach ($f in $files) {

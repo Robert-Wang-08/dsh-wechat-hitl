@@ -129,9 +129,12 @@ node tools\switch-hitl.mjs --show    # 三态开关与挂载状态
 - **技术内容保留**（2026-11-06）：飞书侧不再删 env 变量名/路径/标识符（`stripWechatNoise(..., { keepTechnical: true })`）——此前把 `LARKSUITE_CLI_CONFIG_DIR` 删掉，句子被掏空成「设的是 ，而只认 ，」。微信侧维持原口径。
 - **断行**：ASCII token（路径、变量名、`x.ps1`）内部不设断点；行首不允许出现 `，。；：` 等收尾标点（避头尾）。
 - **尾巴提示**（2026-11-06）：旧文案「回复 100 <内容> 可继续，细节在本会话」有歧义（"本会话"在飞书里既可指聊天也可指 DSH 会话），改为 `turnEndHint()`：飞书两行「回「100 你的话」继续 → DSH 会话 <sid>」+「本条是摘要，全文在 DSH 里」；微信一行「回 100 内容 可继续（摘要，全文在 DSH）」。旧宿主（未重启的 DSH Web 插件）产出的旧措辞由 `upgradeLegacyHint()` 在出口改写，不必重启 3080。
-- **one-line-recap 风格**：caveman 风格但说人话——只留结论与动作，不解释过程、不堆术语；**「❗要你定」永远排最前**（最多两条），其后才是「已做」「进度」。
+- **one-line-recap 风格**（2026-11-08 重做）：caveman 风格但说人话——只留结论与动作，不解释过程、不堆术语。recap 必须是消息第一行（`待定：/阻塞：/答：/无变更。`），从**最终回答**里取句：先挑决策句（`待定`），再挑阻塞句（`阻塞`），否则挑动作信息最多的一句；不再从抬头/会话号/标题行取材（旧版会产出「答：会话 1a2b3c4d。」这种空 recap）。recap 自带后，`applyOneLineRecap` 幂等，不会重复叠加。
+- **多级列表**（2026-11-08）：飞书正文改成「一、任务 / 二、结果」两级：任务取用户首句并压短；结果按「阻塞 → 待定 → 已做 → 进度 → 其他」分组，二级条目用 `　・` 缩进，决策/阻塞永远排最前。微信侧保留单层 `・` 条目（手机气泡窄，最多 3 条）。
+- **超长摘要**（2026-11-08）：命中会话字数上限时，`compactTurnEnd()` 先丢「其他 → 进度 → 已做 → 多余待定」，再缩短条目，保住 recap、标题与最关键的阻塞/待定，不再退回平铺压缩。
+
 - **清洗规则**：不再删除普通英文产品名（superagent / feishu 等），只删 camelCase、snake_case 和长 hex；`【已完成】` 这类小标题会被剥掉，避免「【风险】…」直接糊到脸上。
-- 实现：`distillForChannel(input, {channel, lineWidth})`（微信）、`trimForFeishu(input)`（飞书保结构）；`formatTurnEnd` 按 `currentChannel()` 选择宽度与上限；出口统一走 `outboxTag()`。
+- 实现：`formatTurnEnd` 内置 `oneLineRecap`（recap）+ `terseTask`（任务）+ `resultItems`（结果分组），按 `currentChannel()` 选择两级/单级版式；`distillForChannel`（微信）与 `trimForFeishu`（飞书平铺）仍保留给其他通知路径；出口统一走 `outboxTag()`。
 
 ## 飞书应用清单（2026-11-06 定稿）
 
@@ -147,4 +150,45 @@ node tools\switch-hitl.mjs --show    # 三态开关与挂载状态
 - **open_id 按应用隔离**：同一个人的 open_id 在不同应用下不同（例：app3 下 `ou_fa4d5d4e…`），所以跨应用复用 open_id 会失败，必须各自取。
 - **bot 不能列 p2p 聊天**：`im +chat-list --types p2p` 只支持 user 身份；拿私聊 chat_id 只能从入站事件里取（`lark-cli event consume im.message.receive_v1 --max-events 1 --timeout 3m`，注意 stdin 不能提前关闭）。
 - **新增应用的标准动作**：`pwsh -File tools/init-feishu-app.ps1`（browser 模式走浏览器授权，secret 模式不回显粘贴），落独立目录后用 `restart-feishu-daemon.ps1 -ConfigDir <dir>` 切换。
+
+## 审批 / 提升权限的优先级（2026-11-08）
+
+**问题**：DSH Web 的 `api-remotes` 会注册 `approval/request` 的浏览器转发器，且插件排在它后面；
+瀑布事件第一个不 `next()` 的监听器即决定结果，所以审批被浏览器面板接管，飞书收不到「提升权限」。
+
+**修复**：插件用 `prepend` 把审批监听器放进瀑布最外层；默认 `approval.priority: channel-first`。
+
+| 配置（profiles/web/cordis.patch.yml 的插件 config） | 行为 |
+|---|---|
+| `approval.priority: channel-first`（默认） | 飞书先接审批并阻塞等回复；推不出去/超时才回 DSH 前端 |
+| `approval.priority: ui-first` | DSH 前端先接；没有浏览器客户端时飞书兜底 |
+| 三态开关 `running` | 通道接审批 |
+| 三态开关 `paused` / `stopped` | 立即交回前端，回合不卡死 |
+
+改 `priority` 要重启加载插件的 DSH Web 进程；三态开关仍是热更新。
+沙箱升权文案固定为「【提升权限】+ 目标档位 + 原因」，不再把
+`escalate sandbox to danger-full-access: …` 原样推给用户。根因与证据见
+[FIX-20261108-approval-request-precedence.md](FIX-20261108-approval-request-precedence.md)。
+
+### 决策 / 失败通知开关
+
+`state/control.json` 的 `decisionPush`（默认开）控制三类消息：
+
+| 消息 | 受 `decisionPush` | 受 `resultPush` |
+|---|---|---|
+| 权限提升 / 危险操作审批 | 是 | 否 |
+| `ask_user_question` / `request_user_input` | 是 | 否 |
+| 回合异常结束的失败通知 | 是 | 否 |
+| 回合正常结束摘要 | 否 | 是 |
+
+关闭时这三类都不发飞书，DSH 前端仍按自己的事件链处理；回合结束的成功摘要不受影响。
+飞书里直接发「权限推送关 / 权限推送开 / 审批推送状态」即可；命令行等价：
+
+```powershell
+node bin\wx-hitl.mjs decision status
+node bin\wx-hitl.mjs decision off
+node bin\wx-hitl.mjs decision on
+```
+
+开关是热更新：插件每次事件重新读 `control.json`，不用重启 DSH。
 

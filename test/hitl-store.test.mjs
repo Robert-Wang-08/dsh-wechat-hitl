@@ -121,24 +121,23 @@ test("扁平化文本（换行被压成空格）里的标题与表格也要清�
   assert.ok(!/\*\*/.test(out), "粗体仍漏: " + out);
   assert.match(out, /■ 但现在有个更紧急的问题/, "第二个标题必须也被转成 ■");
 });
-test("回合结束版式符合微信渲染：单换行、无行首缩进、宽度受控", () => {
-  // 依据 2026-10-27 用户反馈「换行不友好」后的重写：
+test("回合结束版式符合微信渲染：recap 首行、单换行、无行首缩进、宽度受控", () => {
+  // 依据 2026-10-27「换行不友好」与 2026-11-08「one-line-recap + caveman + 多级列表」两次反馈：
   // 微信会把连续空行压掉、行首空格 trim 不一致、气泡仅 ~17 汉字宽。
   const out = formatTurnEnd({
     sessionId: "session-24a3d4b5-eac8-4bcf-b153-a22f51be8321",
     durationMs: 40000,
     summary: "按五个一级任务归类并给建议",
-    text: "## 一、srs处理\n| 二级 | 状态 |\n|---|---|\n| 外部需求 | 部分解决 |",
+    text: "## 一、srs处理\n| 二级 | 状态 |\n|---|---|\n| 外部需求 | 部分解决 |\n\n结论：已闭环。",
   });
   const lines = out.split("\n");
-  assert.match(lines[0], /^【回合结束】40 秒$/, "首行只放标题与秒数");
-  // 2026-11-06：会话码只出现一次——抬头由 outboxTag 统一写「【会话码 X · sid】」，
-  // 正文第二行再写一遍纯属重复，会白占一行（微信气泡只有 ~17 汉字宽）。
-  assert.match(lines[1], /^会话 [0-9a-f]{8}$/, "第二行只放会话短号");
-  assert.equal(lines[2], "────────────", "分隔线固定 12 个 ─");
-  assert.ok(!/^\u3000/m.test(out), "不得使用全角空格做行首缩进");
+  assert.match(lines[0], /^(?:待定|阻塞|答|无变更)[：:。]/, "首行必须是 recap（结论一眼可见）");
+  assert.match(lines[0], /^答：已闭环。$/, "recap 取结论句而不是会话号");
+  assert.equal(lines[1], "────────────", "recap 后接分隔线");
+  assert.match(lines[2], /^【回合结束】40 秒$/, "标题与秒数紧随其后");
+  assert.ok(!/^\u3000/m.test(out), "微信侧不得使用全角空格做行首缩进");
   assert.equal((out.match(/\n\n/g) ?? []).length, 1, "全篇只允许 1 处空行（微信会压掉连续空行）");
-  assert.match(out, /结果：/);
+  assert.match(out, /^・任务：/m, "任务要点保留");
   // 会话码由 handle 分配，隔离状态里通常是 1；断言「抬头与尾部提示的码一致」而不是写死数字
   const tagged = outboxTag({ text: out, sessionId: "session-24a3d4b5-eac8-4bcf-b153-a22f51be8321" });
   const codeMatch = tagged.match(/^【会话码 (\d+) · [0-9a-f]{8}】/);
@@ -149,6 +148,87 @@ test("回合结束版式符合微信渲染：单换行、无行首缩进、宽�
   // 允许 +2 的避头尾溢出：行首标点会被并回上一行（2026-11-06），最多多占一个全角字符。
   assert.ok(widest <= 36, "单行显示宽度应 ≤36（含避头尾溢出），实际 " + widest);
 });
+
+test("飞书回合结束是多级列表：任务 / 结果 两层，决策项排最前（2026-11-08）", () => {
+  const previous = process.env.DSH_HITL_CHANNEL;
+  process.env.DSH_HITL_CHANNEL = "feishu";
+  try {
+    const out = formatTurnEnd({
+      sessionId: "session-24a3d4b5-eac8-4bcf-b153-a22f51be8321",
+      durationMs: 94000,
+      summary: "把发布清单整理成一份可核对的表格，标出风险项和待确认项。",
+      text: [
+        "## 发布清单整理",
+        "",
+        "已完成：整理 12 个待发布项并按风险分级。",
+        "",
+        "### 待确认",
+        "- 灰度顺序是否按部门分批",
+        "- 回滚窗口是否保留 30 分钟",
+        "",
+        "### 风险",
+        "- 配置目录不一致会导致清单漏项",
+        "",
+        "### 下一步",
+        "- 生成对照表并抽检 5 项",
+      ].join("\n"),
+    });
+    assert.match(out, /^一、任务$/m, "第一层：任务");
+    assert.match(out, /^　・把发布清单整理成一份可核对的表格，标出风险项和待确认项$/m, "任务要点保留用户目标");
+    assert.match(out, /^二、结果$/m, "第一层：结果");
+    assert.match(out, /^　・待定：/m, "二级条目用全角缩进 + ・");
+    assert.match(out, /^　・已做：/m);
+    assert.match(out, /^　・阻塞：配置目录不一致会导致清单漏项$/m, "风险小标题下归阻塞");
+    assert.ok(out.indexOf("　・待定：") < out.indexOf("　・已做："), "决策项必须排在已做之前");
+    assert.ok(out.indexOf("　・已做：") < out.indexOf("　・进度："), "已做排在进度之前");
+    assert.ok(!/^会话 [0-9a-f]{8}$/m.test(out), "不再重复会话短号（抬头已由 outboxTag 提供）");
+    assert.ok(!/^结果：$/m.test(out), "旧的平铺「结果：」标题被两级结构取代");
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HITL_CHANNEL; else process.env.DSH_HITL_CHANNEL = previous;
+  }
+});
+
+test("Markdown 小标题决定归类：已确认 → 已做，风险 → 阻塞（2026-11-08）", () => {
+  const previous = process.env.DSH_HITL_CHANNEL;
+  process.env.DSH_HITL_CHANNEL = "feishu";
+  try {
+    const out = formatTurnEnd({
+      sessionId: "session-24a3d4b5-eac8-4bcf-b153-a22f51be8321",
+      durationMs: 1000,
+      summary: "检查配置",
+      text: "### 已确认\n- 输入输出字段已定。\n\n### 风险\n- 配置目录不一致会漏记。",
+    });
+    assert.match(out, /^　・已做：输入输出字段已定。$/m, "已确认小标题下归已做");
+    assert.match(out, /^　・阻塞：配置目录不一致会漏记。$/m, "风险小标题下归阻塞");
+    assert.ok(out.indexOf("　・阻塞：") < out.indexOf("　・已做："), "阻塞排在已做前");
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HITL_CHANNEL; else process.env.DSH_HITL_CHANNEL = previous;
+  }
+});
+
+test("applyOneLineRecap 对已带 recap 的回合摘要幂等，不再重复一条", () => {
+  const sessionId = "session-24a3d4b5-eac8-4bcf-b153-a22f51be8321";
+  const body = formatTurnEnd({ sessionId, durationMs: 1000, summary: "看配置", text: "结论：配置项已补齐。" });
+  const once = applyOneLineRecap(body, sessionId, "result");
+  const twice = applyOneLineRecap(once, sessionId, "result");
+  assert.equal(once, body, "已有 recap 的消息原样返回");
+  assert.equal(twice, once, "重复调用不叠加");
+  assert.equal((once.match(/^(?:待定|阻塞|答|无变更)[：:]/gm) ?? []).length, 1);
+});
+
+test("recap 不把会话号/标题当摘要，且 caveman 去填充词（2026-11-08）", () => {
+  const text = "【回合结束】94 秒\n会话 1a2b3c4d\n────────────\n任务：补清单\n结果：\n・已完成：发布清单方案已给出。";
+  const out = applyOneLineRecap(text, "session-1a2b3c4d-0000-0000-0000-000000000000", "result");
+  const recap = out.split("\n")[0];
+  assert.doesNotMatch(recap, /会话 [0-9a-f]{8}/, "recap 不得是会话号");
+  assert.match(recap, /^答：发布清单方案已给出。$/, "去完成度宣告，只留动作与对象");
+});
+
+test("简单结果轮 recap 取动作句，不取「任务已完成」这类宣告", () => {
+  const out = applyOneLineRecap("任务已完成。结果已写入文件。", "session-recap-test", "result");
+  assert.match(out.split("\n")[0], /^答：结果已写入文件。$/, "recap 应为动作句");
+});
+
 
 test("飞书侧保留技术标识符（微信侧仍剔除）2026-11-06", () => {
   const body = "目录串台：`restart-feishu-daemon.ps1 -ConfigDir` 设的是 `LARKSUITE_CLI_CONFIG_DIR`，而 store 只认 `DSH_HITL_LARK_CONFIG_DIR`。";

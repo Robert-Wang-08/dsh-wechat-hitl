@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { matchReply, pickOption, normalizeReply, createRequest, markAnswered, listPending, buildContinuationPrompt, formatAsk, toWechatText, formatTurnEnd, outboxTag, outboxEntryDisposition, CONTEXT_HOLD_MS, parsePushCommand, getResultPush, setResultPush, isResultPushEnabled, describeResultPush, setControl, getSessionNotificationLimits, setSessionNotificationLimits, clearSessionNotificationLimits, applyOneLineRecap, limitNotificationText, stripWechatNoise, trimForFeishu, cutAtBoundary, wrapCjk, turnEndHint, extractSessionTitle, readSessionTitle, sessionDisplayName, getSessionNotificationControl, setSessionNotificationControl, setAllSessionNotificationEnabled, isSessionNotificationEnabled, sessionExists }  from "../lib/hitl-store.js";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { matchReply, pickOption, normalizeReply, createRequest, markAnswered, listPending, buildContinuationPrompt, formatAsk, toWechatText, formatTurnEnd, outboxTag, outboxEntryDisposition, CONTEXT_HOLD_MS, parsePushCommand, getResultPush, setResultPush, isResultPushEnabled, describeResultPush, setControl, getSessionNotificationLimits, setSessionNotificationLimits, clearSessionNotificationLimits, applyOneLineRecap, limitNotificationText, stripWechatNoise, trimForFeishu, cutAtBoundary, wrapCjk, turnEndHint, extractSessionTitle, readSessionTitle, sessionDisplayName, getSessionNotificationControl, setSessionNotificationControl, setAllSessionNotificationEnabled, isSessionNotificationEnabled, sessionExists, resolveFeishuConfigDir, larkCliEnv }  from "../lib/hitl-store.js";
 
 const mk = (over = {}) => ({
   id: "req-test-" + Math.random().toString(16).slice(2, 6),
@@ -446,4 +449,59 @@ test("sessionExists 只认磁盘上真实存在的会话", () => {
   assert.equal(sessionExists(""), false);
   assert.equal(sessionExists("not-a-session"), false);
   assert.equal(sessionExists("session-00000000-0000-4000-8000-000000000000"), false);
+});
+
+test("larkCliEnv 剔除 OpenClaw/Hermes 上下文变量并锁定配置目录", () => {
+  const env = larkCliEnv("C:\\cfg-target", {
+    PATH: "C:\\Windows",
+    OPENCLAW_HOME: "C:\\Users\\x\\.openclaw",
+    OPENCLAW_ACPX_RUNTIME_STARTUP_PROBE: "0",
+    HERMES_HOME: "C:\\Users\\x\\.hermes",
+    LARK_CHANNEL: "some-channel",
+    LARKSUITE_CLI_CONFIG_DIR: "C:\\stale-dir",
+  });
+  assert.equal(env.LARKSUITE_CLI_CONFIG_DIR, "C:\\cfg-target", "配置目录必须被锁定为入参");
+  assert.equal(env.PATH, "C:\\Windows", "普通环境变量要保留");
+  assert.ok(!("OPENCLAW_HOME" in env), "OPENCLAW_HOME 会让 lark-cli 要求 config bind");
+  assert.ok(!("OPENCLAW_ACPX_RUNTIME_STARTUP_PROBE" in env));
+  assert.ok(!("HERMES_HOME" in env));
+  assert.ok(!("LARK_CHANNEL" in env));
+});
+
+test("resolveFeishuConfigDir：显式 env > state 文件 > 合法 ambient > 默认 bot", () => {
+  const root = mkdtempSync(join(tmpdir(), "hitl-lark-"));
+  try {
+    const home = join(root, "home");
+    const stateDir = join(root, "state");
+    mkdirSync(join(home, ".lark-cli-dsh-superagent-feishu2"), { recursive: true });
+    mkdirSync(join(root, "ambient-valid"), { recursive: true });
+    writeFileSync(join(root, "ambient-valid", "config.json"), "{}");
+    mkdirSync(join(root, "ambient-half-init"), { recursive: true });
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(join(stateDir, "lark-config-dir.txt"), join(root, "hinted"));
+
+    assert.equal(
+      resolveFeishuConfigDir({ env: { LARKSUITE_CLI_CONFIG_DIR: join(root, "ambient-valid") }, home, stateDir }),
+      join(root, "hinted"),
+      "state 文件是唯一事实源，不能被终端里残留的 LARKSUITE_CLI_CONFIG_DIR 覆盖",
+    );
+    assert.equal(
+      resolveFeishuConfigDir({ env: { DSH_HITL_LARK_CONFIG_DIR: join(root, "explicit"), LARKSUITE_CLI_CONFIG_DIR: join(root, "ambient-valid") }, home, stateDir }),
+      join(root, "explicit"),
+    );
+
+    rmSync(join(stateDir, "lark-config-dir.txt"), { force: true });
+    assert.equal(
+      resolveFeishuConfigDir({ env: { LARKSUITE_CLI_CONFIG_DIR: join(root, "ambient-valid") }, home, stateDir }),
+      join(root, "ambient-valid"),
+      "没有 state 文件时，带 config.json 的 ambient 目录仍可用（兼容 2026-11-06 约定）",
+    );
+    assert.equal(
+      resolveFeishuConfigDir({ env: { LARKSUITE_CLI_CONFIG_DIR: join(root, "ambient-half-init") }, home, stateDir }),
+      join(home, ".lark-cli-dsh-superagent-feishu2"),
+      "半初始化目录（无 config.json）必须跳过，回落到默认 bot",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

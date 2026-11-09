@@ -187,7 +187,7 @@ async function handleInbound(event) {
 // ── 事件流子进程 ────────────────────────────────────────────────────────────
 function startInbound() {
   if (process.env.DSH_HITL_FEISHU_NO_INBOUND === "1") return;
-  const env = { ...process.env, LARKSUITE_CLI_CONFIG_DIR: store.FEISHU.configDir };
+  const env = store.larkCliEnv(store.FEISHU.configDir);
   try {
     child = spawn(process.execPath, [store.FEISHU.runJs, "event", "consume", store.FEISHU.eventKey], {
       cwd: store.PATHS.workdir,

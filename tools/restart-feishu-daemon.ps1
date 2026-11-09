@@ -74,11 +74,12 @@ if (-not $chosenConfig) {
   else { $chosenConfig = Join-Path $env:USERPROFILE '.lark-cli-feishu-hitl' }
 }
 $nodeExe = (Get-Command node).Source
-$cmdLine = 'cmd.exe /c "set DSH_HITL_CHANNEL=feishu&& set LARKSUITE_CLI_CONFIG_DIR=' + $chosenConfig + '&& ""' + $nodeExe + '"" ""' + $daemon + '"" >> ""' + $outFile + '"" 2>&1"'
+$cmdLine = 'cmd.exe /c "set DSH_HITL_CHANNEL=feishu&& set DSH_HITL_LARK_CONFIG_DIR=' + $chosenConfig + '&& set LARKSUITE_CLI_CONFIG_DIR=' + $chosenConfig + '&& ""' + $nodeExe + '"" ""' + $daemon + '"" >> ""' + $outFile + '"" 2>&1"'
 $spawn = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmdLine }
 if ($spawn.ReturnValue -ne 0) {
   Write-Output ('!!! WMI 启动失败 ReturnValue=' + $spawn.ReturnValue + '，退回 Start-Process')
   $env:DSH_HITL_CHANNEL = 'feishu'
+  $env:DSH_HITL_LARK_CONFIG_DIR = $chosenConfig
   $env:LARKSUITE_CLI_CONFIG_DIR = $chosenConfig
   Start-Process -FilePath $nodeExe -ArgumentList $daemon -WindowStyle Hidden -RedirectStandardOutput $outFile -RedirectStandardError ($outFile + '.err')
 } else {

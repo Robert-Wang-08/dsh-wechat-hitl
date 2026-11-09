@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { matchReply, pickOption, normalizeReply, createRequest, markAnswered, listPending, buildContinuationPrompt, formatAsk, toWechatText, formatTurnEnd, outboxTag, outboxEntryDisposition, CONTEXT_HOLD_MS, parsePushCommand, getResultPush, setResultPush, isResultPushEnabled, describeResultPush, setControl, getSessionNotificationLimits, setSessionNotificationLimits, clearSessionNotificationLimits, applyOneLineRecap, limitNotificationText, stripWechatNoise, trimForFeishu, cutAtBoundary, wrapCjk, turnEndHint, extractSessionTitle, readSessionTitle, sessionDisplayName }  from "../lib/hitl-store.js";
+import { matchReply, pickOption, normalizeReply, createRequest, markAnswered, listPending, buildContinuationPrompt, formatAsk, toWechatText, formatTurnEnd, outboxTag, outboxEntryDisposition, CONTEXT_HOLD_MS, parsePushCommand, getResultPush, setResultPush, isResultPushEnabled, describeResultPush, setControl, getSessionNotificationLimits, setSessionNotificationLimits, clearSessionNotificationLimits, applyOneLineRecap, limitNotificationText, stripWechatNoise, trimForFeishu, cutAtBoundary, wrapCjk, turnEndHint, extractSessionTitle, readSessionTitle, sessionDisplayName, getSessionNotificationControl, setSessionNotificationControl, setAllSessionNotificationEnabled, isSessionNotificationEnabled, sessionExists }  from "../lib/hitl-store.js";
 
 const mk = (over = {}) => ({
   id: "req-test-" + Math.random().toString(16).slice(2, 6),
@@ -262,7 +262,8 @@ test("按会话分别限制结果、权限申请和决策询问长度", () => {
   assert.ok(Array.from(decision).length <= 160);
   assert.ok(Array.from(result).length <= 120);
   clearSessionNotificationLimits(sessionId);
-  assert.deepEqual(getSessionNotificationLimits(sessionId), { result: 0, approval: 0, decision: 0 });
+  // 2026-11-09 裁决后：清除 = 未配置，不再返回 0（0 现在专指「显式不限长」）
+  assert.deepEqual(getSessionNotificationLimits(sessionId), {});
 });
 
 test("所有出站通知先加入 one-line-recap", () => {
@@ -298,4 +299,71 @@ test("会话显示名优先取 DSH 真实标题", () => {
   const real = readSessionTitle("session-7e16012b-9fc7-4302-9ad2-e1bad808c3c5");
   assert.equal(typeof real, "string");
   assert.doesNotMatch(sessionDisplayName("session-7e16012b-9fc7-4302-9ad2-e1bad808c3c5"), /^ncbs·/);
+});
+
+test("会话通知控制：默认开且不限长（Q1=B）；long 可设上限并真的生效", () => {
+  const id = "session-control-test";
+  const defaults = getSessionNotificationControl(id);
+  assert.equal(defaults.enabled, true);
+  assert.equal(defaults.mode, "long");   // Q1=B：未登记默认不限长
+  assert.equal(defaults.maxChars, 0);
+  const long = setSessionNotificationControl(id, { mode: "long", maxChars: 1600 }, { by: "test" });
+  assert.equal(long.control.mode, "long");
+  assert.equal(long.control.maxChars, 1600);
+  const longText = "长内容".repeat(900); // 1800 字 > 1600
+  assert.ok(Array.from(limitNotificationText(longText, id, "result")).length <= 1600, "显式设置的长文上限必须生效");
+  // summary 模式恒定 800，即使同时传了 maxChars
+  const summarized = setSessionNotificationControl(id, { mode: "summary", maxChars: 3000 }, { by: "test" });
+  assert.equal(summarized.control.maxChars, 800);
+});
+
+test("会话通知控制：一键全关关掉默认位并保留模式设置，可再全开", () => {
+  const id = "session-control-all-test";
+  setSessionNotificationControl(id, { enabled: true, mode: "long", maxChars: 3000 }, { by: "test" });
+  const off = setAllSessionNotificationEnabled(false, { by: "test" });
+  assert.equal(off.enabled, false);
+  assert.equal(off.sessions >= 1, true);
+  assert.equal(isSessionNotificationEnabled("session-never-registered"), false);
+  assert.equal(getSessionNotificationControl(id).mode, "long");
+  assert.equal(getSessionNotificationControl(id).maxChars, 3000);
+  setAllSessionNotificationEnabled(true, { by: "test" });
+  assert.equal(isSessionNotificationEnabled("session-never-registered"), true);
+});
+
+test("通知长度口径 Q1=B / Q2=A：未配置不限长、legacy 显式 0 优先、controls 只在 legacy 缺省时生效", () => {
+  const id = "session-precedence-test";
+  const longText = "长内容".repeat(900);   // 1800 字
+  clearSessionNotificationLimits(id);
+
+  // Q1=B：未配置的会话不限长（controls 默认 long/0）
+  assert.equal(limitNotificationText(longText, id, "result"), longText);
+
+  // legacy 未配置该 kind → controls 生效（long/300）
+  setSessionNotificationControl(id, { mode: "long", maxChars: 300 }, { by: "test" });
+  assert.ok(Array.from(limitNotificationText(longText, id, "result")).length <= 300);
+
+  // Q2=A：legacy 显式 0（不限长）压过 controls 的 300
+  setSessionNotificationLimits(id, { result: 0 });
+  assert.equal(limitNotificationText(longText, id, "result"), longText);
+
+  // Q2=A：legacy 显式 120 压过 controls 的 300
+  setSessionNotificationLimits(id, { result: 120 });
+  assert.ok(Array.from(limitNotificationText(longText, id, "result")).length <= 120);
+
+  // 同会话其它 kind 未被 legacy 配置 → 仍走 controls（approval 300）
+  assert.ok(Array.from(limitNotificationText(longText, id, "approval")).length <= 300);
+
+  // 显式 summary 恒 800，但 legacy 显式值仍优先
+  setSessionNotificationControl(id, { mode: "summary", maxChars: 3000 }, { by: "test" });
+  assert.equal(getSessionNotificationControl(id).maxChars, 800);
+  assert.ok(Array.from(limitNotificationText(longText, id, "decision")).length <= 800);
+  assert.ok(Array.from(limitNotificationText(longText, id, "result")).length <= 120);
+
+  clearSessionNotificationLimits(id);
+});
+
+test("sessionExists 只认磁盘上真实存在的会话", () => {
+  assert.equal(sessionExists(""), false);
+  assert.equal(sessionExists("not-a-session"), false);
+  assert.equal(sessionExists("session-00000000-0000-4000-8000-000000000000"), false);
 });

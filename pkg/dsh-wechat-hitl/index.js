@@ -68,6 +68,7 @@ export function apply(ctx, config = {}) {
     if (typeof id !== "string" || id.length === 0) return true;
     if (Array.isArray(cfg.excludeSessionIdPrefixes) && cfg.excludeSessionIdPrefixes.some((prefix) => prefix && id.startsWith(prefix))) return true;
     if (!isMainSession(session)) return true;
+    if (typeof store.isSessionNotificationEnabled === "function" && !store.isSessionNotificationEnabled(id)) return true;
     return false;
   };
 
@@ -143,7 +144,7 @@ export function apply(ctx, config = {}) {
         store.markDelivered(req.id, delivery);
         if (delivery === "injected") {
           // message 模式不额外推「已注入」提示（用户刚发完，避免回声刷屏）
-          if (req.mode === "inject") await store.pushWechat("▶️ " + store.handleText(req) + " 答复已注入原会话，正在继续执行。", undefined, { sessionId: req.sessionId });
+          if (req.mode === "inject") await store.pushWechat("▶️ " + store.handleText(req) + " 答复已注入原会话，正在继续执行。", undefined, { sessionId: req.sessionId, kind: "result" });
           else log({ stage: "relayed", id: req.id, sessionId: req.sessionId });
         }
       }
@@ -167,6 +168,10 @@ export function apply(ctx, config = {}) {
   // ── 审批门禁：微信阻塞式批准 ──────────────────────────────────────────────
   ctx.on("approval/request", async (req, next) => {
     if (!cfg.approval.enabled) return next();
+    if (typeof store.isDecisionPushEnabled === "function" && !store.isDecisionPushEnabled()) {
+      log({ stage: "approval-delegated-by-decision-switch", state: store.getControl().state, tool: req?.toolName ?? null });
+      return next();
+    }
     // 三态开关：只有 running 才把审批推到微信并阻塞等待。
     // paused / stopped 必须立刻 next() 交回 DSH 原生界面处理，否则暂停就会把回合卡死。
     const control = store.getControl();
@@ -190,7 +195,7 @@ export function apply(ctx, config = {}) {
       context: sessionCwd(session) ?? "",
     }, approvalTimeoutMs);
     log({ stage: "approval-ask", id: request.id, tool: req?.toolName, sessionId: session.id, ttlMs: approvalTimeoutMs });
-    const pushed = await store.pushWechat(store.formatAsk(request));
+    const pushed = await store.pushWechat(store.formatAsk(request), undefined, { sessionId: session.id, kind: "approval" });
     if (!pushed.ok) {
       log({ stage: "approval-push-failed", id: request.id, output: pushed.output });
       store.markStatus(request.id, "cancelled");
@@ -210,7 +215,7 @@ export function apply(ctx, config = {}) {
       await store.sleep(700);
     }
     store.markStatus(request.id, "expired");
-    await store.pushWechat("⌛ 批准请求已过期（" + Math.round((Number(cfg.approval.timeoutMs) || 600000) / 60000) + " 分钟无回复），已交回 DSH 界面处理。", undefined, { sessionId: request.sessionId });
+    await store.pushWechat("⌛ 批准请求已过期（" + Math.round((Number(cfg.approval.timeoutMs) || 600000) / 60000) + " 分钟无回复），已交回 DSH 界面处理。", undefined, { sessionId: request.sessionId, kind: "approval" });
     return next();
   });
 
@@ -269,9 +274,15 @@ export function apply(ctx, config = {}) {
       order += 1;
       const entry = entryFor(sessionId, turn);
       entry.lastToolCall = { order };
-      if (data.name === "ask_user_question") {
+      const questionToolName = String(data.name ?? data.tool?.name ?? data.call?.name ?? "");
+      if (questionToolName === "ask_user_question" || questionToolName === "request_user_input") {
+        // DSH UI 对 ask_user_question 与 request_user_input 都表示交互式询问。
         // 暂停期间不建待确认请求（推送层还会再拦一次），避免留下必然过期的悬空请求
         if (store.getControl().state !== "running") { log({ stage: "question-skipped-by-switch", state: store.getControl().state }); return; }
+         if (typeof store.isDecisionPushEnabled === "function" && !store.isDecisionPushEnabled()) {
+           log({ stage: "question-skipped-by-decision-switch", state: store.getControl().state });
+           return;
+         }
         let args = {};
         try { args = typeof data.arguments === "string" ? JSON.parse(data.arguments) : (data.arguments ?? {}); } catch { args = {}; }
         const questions = Array.isArray(args.questions) ? args.questions : [];
@@ -287,7 +298,7 @@ export function apply(ctx, config = {}) {
           context: sessionCwd(session) ?? "",
         });
         awaitingTurn.set(sessionId, true);
-        store.pushWechat(store.formatAsk(request), undefined, { sessionId: session.id }).catch((error) => log({ stage: "question-push", error: String(error) }));
+        store.pushWechat(store.formatAsk(request), undefined, { sessionId: session.id, kind: "decision" }).catch((error) => log({ stage: "question-push", error: String(error) }));
         log({ stage: "question-ask", id: request.id, sessionId: session.id, options: options.length });
       }
       return;
@@ -304,10 +315,38 @@ export function apply(ctx, config = {}) {
       endedTurns.set(sessionId, turn);
       const wasAwaiting = awaitingTurn.get(sessionId) === true;
       awaitingTurn.delete(sessionId);
-      if (!cfg.notifyOnTurnEnd) return;
       if (store.getControl().state !== "running") { log({ stage: "turnend-skipped-by-switch", state: store.getControl().state }); return; }
       if (wasAwaiting) return;
-      if (data.reason?.kind !== "completed") return;
+      // 失败通知：回合非正常结束（error / aborted 等）时必须告知人，
+      // 不能因为「结果推送关」或「回合摘要关（notifyOnTurnEnd=false）」就把失败一起吞掉。
+      // 这里按「决策类」走：受总通道（running）与权限/决策开关约束；
+      // 通道关闭 / 会话 /push off / 非主会话（excluded）与已推过提问的回合（wasAwaiting）
+      // 在进入本分支前就已返回，不在这里制造重复打扰。
+      if (data.reason?.kind !== "completed") {
+        const reasonKind = String(data.reason?.kind ?? "unknown");
+        if (typeof store.isDecisionPushEnabled === "function" && !store.isDecisionPushEnabled()) {
+          log({ stage: "turn-failed-suppressed", sessionId, turn, reasonKind, why: "decision-push-off" });
+          return;
+        }
+        const seconds = entry !== undefined && entry.startTime !== null && typeof event.time === "number"
+          ? Math.round((event.time - entry.startTime) / 1000)
+          : null;
+        const code = store.sessionCode(sessionId);
+        const notice = [
+          "阻塞：本轮异常结束（" + reasonKind + "）。",
+          "────────────",
+          (code === null ? "" : "会话码 " + code + "　") + "会话 " + String(sessionId).replace(/^session-/, "").slice(0, 8),
+          "结束原因：" + reasonKind,
+          (seconds === null ? "" : "已运行 " + seconds + " 秒"),
+          code === null ? "细节在本会话里" : "回复 " + code + " <内容> 可继续，细节在本会话",
+        ].filter((line) => line !== "").join("\n");
+        store.pushWechat(notice, undefined, { sessionId, kind: "decision" }).catch((error) => log({ stage: "turn-failed-push", error: String(error) }));
+        log({ stage: "turn-failed-notify", sessionId, turn, reasonKind });
+        return;
+      }
+      // notifyOnTurnEnd 只关「回合结束摘要」这一条；失败通知已在上面的分支按决策类发过，
+      // 不能因为摘要开关关掉就把失败一起吞掉（与上面失败分支的注释同口径）。
+      if (!cfg.notifyOnTurnEnd) return;
       const durationMs = entry !== undefined && entry.startTime !== null && typeof event.time === "number" ? Math.max(0, event.time - entry.startTime) : null;
       log({
         stage: "turn-end-eval",
@@ -331,7 +370,7 @@ export function apply(ctx, config = {}) {
       const summary = entry.firstUser ?? "(无用户输入)";
       const tail = entry.lastAssistant.text ?? "";
       const text = store.formatTurnEnd({ sessionId, durationMs, summary, text: tail });
-      store.pushWechat(text, undefined, { sessionId }).catch((error) => log({ stage: "turnend-push", error: String(error) }));
+      store.pushWechat(text, undefined, { sessionId, kind: "result" }).catch((error) => log({ stage: "turnend-push", error: String(error) }));
       log({ stage: "turn-end-notify", sessionId, turn, durationMs });
       return;
     }

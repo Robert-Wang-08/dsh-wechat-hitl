@@ -11,6 +11,9 @@
  *
  * 会话 id 默认取 $env:DSH_SESSION_ID（DSH 会给每个会话注入），可用 --session 覆盖。
  */
+// 明确锁死微信通道：通道选择默认读 state/channel.json，wx-hitl 必须永远代表微信那一侧。
+process.env.DSH_HITL_CHANNEL = "wechat";
+
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
@@ -18,8 +21,9 @@ import {
   markStatus, formatAsk, formatResolved, formatAmbiguous, pushWechat, buildContinuationPrompt,
   runHeadlessTurn, parseNdjson, shortId, log,
   getControl, setControl, describeControl, CONTROL_STATES, loadState as loadStateSafe,
-  getResultPush, setResultPush, describeResultPush, parsePushCommand,
-  getBinding, setBinding, clearBinding, listSessions, pickSession, formatSessionList, buildMessageRequest,
+  getResultPush, setResultPush, describeResultPush, getDecisionPush, setDecisionPush, describeDecisionPush, describeChannelControl, parsePushCommand,
+  getBinding, setBinding, clearBinding, listSessions, listSessionsV2, sessionExists, pickSession, formatSessionList, buildMessageRequest,
+  getSessionNotificationLimits, setSessionNotificationLimits, clearSessionNotificationLimits, NOTIFICATION_LIMIT_KINDS,
 } from "../lib/hitl-store.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -44,6 +48,16 @@ function currentSession(args) {
   return value === "auto" ? (process.env.DSH_SESSION_ID || "") : value;
 }
 
+// 显式指定会话时必须真实存在于磁盘（错误文案承诺过「会话必须存在」）；
+// 环境变量里的当前会话由 DSH 注入、本身就是活的，不在这里校验。
+function resolveSessionSelector(selector) {
+  const value = String(selector ?? "").trim();
+  if (!value) return "";
+  if (value.startsWith("session-")) return sessionExists(value) ? value : "";
+  const hit = listSessionsV2(200).find((row) => String(row.code) === value || row.sessionId === value);
+  return hit?.sessionId ?? "";
+}
+
 function out(text) { process.stdout.write(text + "\n"); }
 
 const args = parseArgs(process.argv.slice(2));
@@ -53,7 +67,7 @@ if (command === "notify") {
   const text = typeof args.text === "string" ? args.text : "";
   if (!text) { out("notify 需要 --text \"内容\""); process.exit(2); }
   const header = args.title ? String(args.title) + "\n" : "";
-  const result = await pushWechat(header + text);
+  const result = await pushWechat(header + text, undefined, { sessionId: currentSession(args) || null, kind: "result" });
   out(JSON.stringify({ ok: result.ok, code: result.code, output: result.output.slice(-300) }));
   process.exit(result.ok ? 0 : 1);
 } else if (command === "ask") {
@@ -80,7 +94,7 @@ if (command === "notify") {
     out(JSON.stringify({ ok: false, suppressed: true, state: error.switchState ?? getControl().state, error: String(error.message) }));
     process.exit(1);
   }
-  const result = await pushWechat(formatAsk(req));
+  const result = await pushWechat(formatAsk(req), undefined, { sessionId: req.sessionId, kind: req.mode === "approval" ? "approval" : "decision" });
   out(JSON.stringify({ ok: result.ok, handle: req.handle, requestId: req.id, sessionId: req.sessionId, push: result.output.slice(-200) }));
   process.exit(result.ok ? 0 : 1);
 } else if (command === "switch" || command === "on" || command === "pause" || command === "off") {
@@ -119,6 +133,17 @@ if (command === "notify") {
   const result = setResultPush(on, { by: "cli", reason: "wx-hitl push " + arg });
   out((result.to ? "🟢 结果推送：已开" : "🟡 结果推送：已关") + "（" + (result.from ? "开" : "关") + " → " + (result.to ? "开" : "关") + "）");
   process.exit(0);
+} else if (command === "decision") {
+  const arg = String(args._[1] ?? args.state ?? "status").toLowerCase();
+  if (!["on", "off", "status", "开", "关"].includes(arg)) {
+    out(JSON.stringify({ ok: false, error: "用法：decision on|off|status" }));
+    process.exit(2);
+  }
+  if (arg === "status") { out(describeDecisionPush()); process.exit(0); }
+  const on = ["on", "开"].includes(arg);
+  const result = setDecisionPush(on, { by: "cli", reason: "wx-hitl decision " + arg });
+  out((result.to ? "🟢 权限/决策询问：已开" : "🟡 权限/决策询问：已关") + "（" + (result.from ? "开" : "关") + " → " + (result.to ? "开" : "关") + "）");
+  process.exit(0);
 } else if (command === "relay") {
   // 把一段文本转发进指定会话（微信之外的另一个驱动入口，便于脚本/测试）
   const text = typeof args.text === "string" ? args.text : "";
@@ -148,13 +173,39 @@ if (command === "notify") {
     out(JSON.stringify({ ok: false, suppressed: true, state: error.switchState ?? null, error: String(error.message) }));
     process.exit(1);
   }
+} else if (command === "limits") {
+  const explicit = args.session && args.session !== true ? args.session : (args._[1] ?? null);
+  const sessionId = explicit === null ? (currentSession(args) || "") : resolveSessionSelector(explicit);
+  if (!sessionId) { out(JSON.stringify({ ok: false, error: "limits 需要 --session <会话码|sessionId>，且会话必须存在" })); process.exit(2); }
+  if (args.clear) {
+    const cleared = clearSessionNotificationLimits(sessionId);
+    out(JSON.stringify({ ok: true, sessionId, cleared, limits: getSessionNotificationLimits(sessionId) }, null, 2));
+    process.exit(0);
+  }
+  const patch = {};
+  for (const kind of NOTIFICATION_LIMIT_KINDS) {
+    if (args[kind] !== undefined && args[kind] !== true) patch[kind] = args[kind];
+  }
+  if (args["session-notify"] !== undefined && args["session-notify"] !== true) patch.result = args["session-notify"];
+  if (args.permission !== undefined && args.permission !== true) patch.approval = args.permission;
+  if (args.question !== undefined && args.question !== true) patch.decision = args.question;
+  try {
+    const result = Object.keys(patch).length > 0 ? setSessionNotificationLimits(sessionId, patch) : { sessionId, limits: getSessionNotificationLimits(sessionId) };
+    out(JSON.stringify({ ok: true, ...result }, null, 2));
+  } catch (error) {
+    out(JSON.stringify({ ok: false, error: String(error.message) }));
+    process.exit(2);
+  }
 } else if (command === "status") {
   const control = getControl();
   const pending = listPending();
   const state = JSON.parse(JSON.stringify(loadStateSafe()));
   out(JSON.stringify({
     switch: { state: control.state, describe: describeControl(control), updatedAt: control.updatedAt, updatedBy: control.updatedBy, reason: control.reason ?? "" },
-    sending: control.state === "running",
+    controls: describeChannelControl(),
+     decisionPush: getDecisionPush(),
+     resultPush: getResultPush(),
+     sending: control.state === "running",
     outboxQueued: Array.isArray(state.outbox) ? state.outbox.length : 0,
     pendingCount: pending.length,
     pending: pending.map((req) => ({ handle: req.handle ?? null, id: req.id, mode: req.mode, kind: req.kind, question: req.question.slice(0, 80), sessionId: req.sessionId, expiresAt: new Date(req.expiresAt).toISOString() })),
@@ -188,6 +239,6 @@ if (command === "notify") {
   markStatus(id, "cancelled");
   out(JSON.stringify({ ok: true, id }));
 } else {
-  out("用法: wx-hitl.mjs <notify|ask|status|resolve|continue|cancel> [选项]\n" + JSON.stringify(PATHS));
+  out("用法: wx-hitl.mjs <notify|ask|limits|status|resolve|continue|cancel> [选项]\n" + JSON.stringify(PATHS));
   process.exit(2);
 }

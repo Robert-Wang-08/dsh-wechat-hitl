@@ -77,6 +77,54 @@ test("/new：指令自包含，回执标记能被解析", () => {
   assert.equal(store.parseNewSessionMarker("[[new_session:bad]]"), null);
 });
 
+test("/push <码> off|on 写到会话控制表，未知码报错不写状态", () => {
+  const dir = process.env.DSH_WECHAT_HITL_STATE;
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(store.REGISTRY_FILE, JSON.stringify({ version: 1, nextCode: 60, bySession: { "session-push-1": { code: 51, createdAt: 2000, label: "推送测试" } } }), "utf8");
+  const off = store.runChannelCommand("/push 51 off", { by: "feishu" });
+  assert.equal(off.kind, "push-control");
+  assert.equal(off.sessionId, "session-push-1");
+  assert.equal(store.isSessionNotificationEnabled("session-push-1"), false);
+  const on = store.runChannelCommand("/push 51 on", { by: "feishu" });
+  assert.equal(on.kind, "push-control");
+  assert.equal(store.isSessionNotificationEnabled("session-push-1"), true);
+  const missing = store.runChannelCommand("/push 87 off", { by: "feishu" });
+  assert.equal(missing.kind, "error");
+  assert.match(missing.text, /没有会话码 87/);
+});
+
+test("/push all off|on 关默认位、保留模式设置", () => {
+  const dir = process.env.DSH_WECHAT_HITL_STATE;
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(store.REGISTRY_FILE, JSON.stringify({ version: 1, nextCode: 60, bySession: { "session-push-2": { code: 52, createdAt: 2000, label: "" } } }), "utf8");
+  store.setSessionNotificationControl("session-push-2", { enabled: true, mode: "long", maxChars: 1600 }, { by: "test" });
+  const allOff = store.runChannelCommand("/push all off", { by: "feishu" });
+  assert.equal(allOff.kind, "push-control");
+  assert.equal(store.isSessionNotificationEnabled("session-never-registered"), false);
+  assert.equal(store.isSessionNotificationEnabled("session-push-2"), false);
+  const kept = store.getSessionNotificationControl("session-push-2");
+  assert.equal(kept.mode, "long");       // 一键全关只动开关，不重置模式
+  assert.equal(kept.maxChars, 1600);
+  store.runChannelCommand("/push all on", { by: "feishu" });
+  assert.equal(store.isSessionNotificationEnabled("session-push-2"), true);
+});
+
+test("/push <码> mode summary|long 与上限落盘", () => {
+  const dir = process.env.DSH_WECHAT_HITL_STATE;
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(store.REGISTRY_FILE, JSON.stringify({ version: 1, nextCode: 60, bySession: { "session-push-3": { code: 53, createdAt: 2000, label: "" } } }), "utf8");
+  store.runChannelCommand("/push 53 mode summary", { by: "feishu" });
+  assert.equal(store.getSessionNotificationControl("session-push-3").mode, "summary");
+  assert.equal(store.getSessionNotificationControl("session-push-3").maxChars, 800);
+  store.runChannelCommand("/push 53 mode long 3000", { by: "feishu" });
+  assert.equal(store.getSessionNotificationControl("session-push-3").mode, "long");
+  assert.equal(store.getSessionNotificationControl("session-push-3").maxChars, 3000);
+  store.runChannelCommand("/push 53 mode long full", { by: "feishu" });
+  assert.equal(store.getSessionNotificationControl("session-push-3").maxChars, 0);
+  // 只认 800/1600/3000/full；非法上限不落盘，按未知指令提示
+  assert.equal(store.runChannelCommand("/push 53 mode long 900", { by: "feishu" }).kind, "unknown");
+});
+
 test("码空间 1..999：满了回收最老的一条，并留下替换提示", () => {
   assert.equal(store.MAX_SESSION_CODE, 999);
   const dir = process.env.DSH_WECHAT_HITL_STATE;

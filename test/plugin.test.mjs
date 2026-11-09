@@ -32,6 +32,7 @@ test("turn/end 合格回合会触发推送（无审批/提问干扰）", async (
   const store = await import("../lib/hitl-store.js");
   const outbox = store.loadState().outbox ?? [];
   assert.equal(outbox.length > 0, true, "outbox 应至少多一条：before=" + before);
+  assert.match(outbox[outbox.length - 1].text, /^答：/);
   assert.match(outbox[outbox.length - 1].text, /回合结束/);
 });
 
@@ -66,8 +67,27 @@ test("ask_user_question 会建 inject 请求并推送选项", async () => {
   assert.equal(pending[0].mode, "inject");
   assert.deepEqual(pending[0].options.map((o) => o.label), ["A", "B"]);
   const outbox = store.loadState().outbox ?? [];
+  assert.match(outbox[outbox.length - 1].text, /^待定：/);
   assert.match(outbox[outbox.length - 1].text, /选 A 还是 B/);
   // 清理，避免污染后续真实待确认表
+  store.markStatus(pending[0].id, "cancelled");
+});
+
+test("request_user_input 也会建 inject 请求并推送选项", async () => {
+  const ctx = fakeCtx();
+  apply(ctx, { minTurnMs: 0, pollMs: 0, excludeSessionIdPrefixes: ["wx-"] });
+  const session = mainSession("session-test-request-input");
+  const store = await import("../lib/hitl-store.js");
+  const t0 = Date.now();
+  ctx.emit("session/event", session, { type: "turn/start", time: t0, data: { turn: 1 } });
+  ctx.emit("session/event", session, {
+    type: "tool/call",
+    data: { turn: 1, callId: "call-request-input", name: "request_user_input", arguments: JSON.stringify({ questions: [{ id: "q1", question: "是否继续交易？", options: [{ label: "继续" }, { label: "停止" }] }] }) },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const pending = store.listPending().filter((req) => req.sessionId === "session-test-request-input");
+  assert.equal(pending.length, 1);
+  assert.deepEqual(pending[0].options.map((o) => o.label), ["继续", "停止"]);
   store.markStatus(pending[0].id, "cancelled");
 });
 
@@ -110,3 +130,31 @@ test("审批超时：委派给下一个 answerer（next），不擅自放行", a
   assert.equal(outcome, "unavailable");
 });
 
+test("回合异常结束时推送失败通知（不受结果推送开关影响）", async () => {
+  const ctx = fakeCtx();
+  apply(ctx, { minTurnMs: 0, pollMs: 0, excludeSessionIdPrefixes: ["wx-"] });
+  const store = await import("../lib/hitl-store.js");
+  const session = mainSession("session-test-fail");
+  const t0 = Date.now();
+  ctx.emit("session/event", session, { type: "turn/start", time: t0, data: { turn: 1 } });
+  ctx.emit("session/event", session, { type: "turn/end", time: t0 + 5000, data: { turn: 1, reason: { kind: "error" } } });
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const outbox = store.loadState().outbox ?? [];
+  const hit = outbox.filter((entry) => String(entry.text ?? "").includes("异常结束"));
+  assert.equal(hit.length > 0, true, "应产生一条失败通知");
+  assert.match(hit[hit.length - 1].text, /error/);
+});
+
+test("notifyOnTurnEnd=false 只关回合摘要，不吞失败通知", async () => {
+  const ctx = fakeCtx();
+  apply(ctx, { notifyOnTurnEnd: false, minTurnMs: 0, pollMs: 0, excludeSessionIdPrefixes: ["wx-"] });
+  const store = await import("../lib/hitl-store.js");
+  const session = mainSession("session-test-fail-notify-off");
+  const t0 = Date.now();
+  ctx.emit("session/event", session, { type: "turn/start", time: t0, data: { turn: 1 } });
+  ctx.emit("session/event", session, { type: "turn/end", time: t0 + 5000, data: { turn: 1, reason: { kind: "aborted" } } });
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const outbox = store.loadState().outbox ?? [];
+  const hit = outbox.filter((entry) => String(entry.text ?? "").includes("aborted"));
+  assert.equal(hit.length > 0, true, "失败通知不得被 notifyOnTurnEnd 关掉（它属于决策类）");
+});

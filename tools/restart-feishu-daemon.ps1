@@ -36,7 +36,7 @@ function Show-Status {
   $beat = Get-Beat
   if (-not $beat) { Write-Output '心跳文件不存在：守护进程没起过'; return $false }
   $age = [math]::Round(((Get-Date).ToUniversalTime().ToFileTime() / 10000 - 11644473600000 - [double]$beat.tickAt) / 1000, 1)
-  $alive = $age -le 30
+  $alive = $age -le 30 -and $beat.inbound -eq "running"
   Write-Output ("daemon pid=" + $beat.pid + "  alive=" + $alive + "  heartbeatAgeSec=" + $age + "  inbound=" + $beat.inbound + "  lastError=" + $beat.lastError)
   return $alive
 }
@@ -59,7 +59,7 @@ if (-not (Test-Path $daemon)) { Write-Output ("!!! 找不到守护进程入口�
 $beat = Get-Beat
 if ($beat -and $beat.pid -and (Get-Process -Id $beat.pid -ErrorAction SilentlyContinue)) {
   $age = [math]::Round(((Get-Date).ToUniversalTime().ToFileTime() / 10000 - 11644473600000 - [double]$beat.tickAt) / 1000, 1)
-  if ($age -le 30) { Write-Output ("已在运行 pid=" + $beat.pid + "，跳过启动"); Show-Status | Out-Null; exit 0 }
+  if ($age -le 30 -and $beat.inbound -eq "running") { Write-Output ("已在运行 pid=" + $beat.pid + "，跳过启动"); Show-Status | Out-Null; exit 0 }
 }
 
 $chosenConfig = $ConfigDir
@@ -73,6 +73,7 @@ if (-not $chosenConfig) {
   elseif (Test-Path $legacy) { $chosenConfig = $legacy }
   else { $chosenConfig = Join-Path $env:USERPROFILE '.lark-cli-feishu-hitl' }
 }
+$launchStartedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $nodeExe = (Get-Command node).Source
 $cmdLine = 'cmd.exe /c "set DSH_HITL_CHANNEL=feishu&& set DSH_HITL_LARK_CONFIG_DIR=' + $chosenConfig + '&& set LARKSUITE_CLI_CONFIG_DIR=' + $chosenConfig + '&& ""' + $nodeExe + '"" ""' + $daemon + '"" >> ""' + $outFile + '"" 2>&1"'
 $spawn = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmdLine }
@@ -92,7 +93,12 @@ for ($i = 0; $i -lt $rounds; $i++) {
   $b = Get-Beat
   if ($b) {
     $age = [math]::Round(((Get-Date).ToUniversalTime().ToFileTime() / 10000 - 11644473600000 - [double]$b.tickAt) / 1000, 1)
-    if ($age -le 10) { Write-Output ('daemon UP after ~' + (($i + 1) * 2) + 's (pid ' + $b.pid + ', inbound=' + $b.inbound + ')'); exit 0 }
+    $newInstance = [double]$b.startedAt -ge $launchStartedAt
+    if ($newInstance -and $b.inbound -eq "spawn-failed") {
+      Write-Output ("!!! 入站启动失败：" + $b.lastError + "；请在宿主 PowerShell 运行同一脚本，勿在受限会话内重复启动")
+      exit 1
+    }
+    if ($newInstance -and $age -le 10 -and $b.inbound -eq "running") { Write-Output ('daemon UP after ~' + (($i + 1) * 2) + 's (pid ' + $b.pid + ', inbound=' + $b.inbound + ')'); exit 0 }
   }
 }
 Write-Output ('!!! 守护进程在 ' + $TimeoutSeconds + 's 内没有写心跳，看 ' + $outFile)

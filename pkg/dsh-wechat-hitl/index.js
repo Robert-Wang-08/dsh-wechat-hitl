@@ -147,7 +147,7 @@ export function apply(ctx, config = {}) {
       //   inject  — 用户答复了某个确认请求，作为新回合续跑原任务
       //   message — 微信里直接发的普通消息，绑定到某个会话后原样转发进去（微信当遥控器）
       const answered = Object.values(store.loadState().requests ?? {}).filter((req) => {
-        if (req.deliveredAt) return false;
+        if (req.deliveredAt || req.deliveryFailureAt) return false;
         if (req.mode === "inject") return req.status === "answered";
         if (req.mode === "message") return req.status === "pending";
         return false;
@@ -158,6 +158,7 @@ export function apply(ctx, config = {}) {
         // 首选：DSH 会话控制器（web profile 有；把答复作为新用户消息入队并唤醒会话）
         const controller = ctx.get?.("sessionController");
         if (controller && typeof controller.prompt === "function") {
+          if (req.channel === "feishu" && !store.claimRequestDelivery(req.id)) continue;
           try {
             // prompt(request, signal)：signal 是必填的（web 宿主实测未传会抛
             // "Cannot read properties of undefined (reading 'throwIfAborted')"）。
@@ -181,6 +182,11 @@ export function apply(ctx, config = {}) {
             continue;
           }
           delivery = "controller-failed";
+        }
+        if (delivery !== "injected") {
+          // Admission may have raced a transport failure; do not claim success or replay it.
+          store.failRequestDelivery(req.id, delivery);
+          continue;
         }
         store.markDelivered(req.id, delivery);
         if (delivery === "injected") {
@@ -306,8 +312,11 @@ export function apply(ctx, config = {}) {
       const turn = currentTurn.get(sessionId);
       if (!Number.isSafeInteger(turn)) return;
       const entry = entryFor(sessionId, turn);
-      if (entry.firstUser !== null) return;
       if (data.source?.kind !== "user") return;
+      const rpcId = String(data.source?.rpcId ?? "");
+      const remote = rpcId.startsWith("rpc-") ? store.getRequest(rpcId.slice(4)) : null;
+      if (remote?.channel === "feishu" && remote.sessionId === sessionId) entry.remoteRelay = remote;
+      if (entry.firstUser !== null) return;
       const text = (Array.isArray(data.content) ? data.content : []).filter((block) => block?.type === "text").map((block) => block.text).join(" ");
       entry.firstUser = clip(text) || null;
       return;
@@ -320,7 +329,8 @@ export function apply(ctx, config = {}) {
       const content = Array.isArray(data.message?.content) ? data.message.content : [];
       const hasText = content.some((block) => block?.type === "text" && typeof block.text === "string" && block.text.trim().length > 0);
       const hasToolCall = content.some((block) => block?.type === "tool-call");
-      entry.lastAssistant = { order, hasText, hasToolCall, text: clip(content.filter((block) => block?.type === "text").map((block) => block.text).join(" ")) };
+      const rawText = content.filter((block) => block?.type === "text").map((block) => block.text).join("\n");
+      entry.lastAssistant = { order, hasText, hasToolCall, text: clip(rawText), rawText };
       return;
     }
     if (type === "tool/call") {
@@ -397,7 +407,7 @@ export function apply(ctx, config = {}) {
           (seconds === null ? "" : "已运行 " + seconds + " 秒"),
           store.turnEndHint(sessionId, code, { wide: store.currentChannel() === "feishu" }),
         ].filter((line) => line !== "").join("\n");
-        store.pushWechat(notice, undefined, { sessionId, kind: "decision" }).catch((error) => log({ stage: "turn-failed-push", error: String(error) }));
+        store.pushWechat(notice, undefined, { sessionId, kind: "decision", feishuReplyChatId: entry?.remoteRelay?.replyChatId }).catch((error) => log({ stage: "turn-failed-push", error: String(error) }));
         log({ stage: "turn-failed-notify", sessionId, turn, reasonKind });
         return;
       }
@@ -417,7 +427,7 @@ export function apply(ctx, config = {}) {
       });
       if (!entry || !entry.lastAssistant?.hasText || entry.lastAssistant.hasToolCall) return;
       if (entry.lastToolCall && !isAfter(entry.lastAssistant, entry.lastToolCall)) return;
-      if (durationMs !== null && durationMs < Number(cfg.minTurnMs)) return;
+      if (!entry.remoteRelay && durationMs !== null && durationMs < Number(cfg.minTurnMs)) return;
       // REQ-001：结果推送有独立总开关，关掉时只跳过"回合结束通知"，
       // 审批门禁与 ask_user_question 推送不受影响。
       if (typeof store.isResultPushEnabled === "function" && !store.isResultPushEnabled()) {
@@ -425,9 +435,12 @@ export function apply(ctx, config = {}) {
         return;
       }
       const summary = entry.firstUser ?? "(无用户输入)";
-      const tail = entry.lastAssistant.text ?? "";
-      const text = store.formatTurnEnd({ sessionId, durationMs, summary, text: tail });
-      store.pushWechat(text, undefined, { sessionId, kind: "result" }).catch((error) => log({ stage: "turnend-push", error: String(error) }));
+      const tail = entry.lastAssistant.rawText ?? entry.lastAssistant.text ?? "";
+      const code = entry.remoteRelay ? store.sessionCode(sessionId) : null;
+      const text = entry.remoteRelay
+        ? "【会话码 " + code + " · " + sessionId.replace(/^session-/, "").slice(0, 8) + "】\n【会话回复】\n" + tail + "\n\n回「" + code + " 你的话」继续"
+        : store.formatTurnEnd({ sessionId, durationMs, summary, text: entry.lastAssistant.text ?? "" });
+      store.pushWechat(text, undefined, { sessionId, kind: "result", feishuReplyChatId: entry.remoteRelay?.replyChatId }).catch((error) => log({ stage: "turnend-push", error: String(error) }));
       log({ stage: "turn-end-notify", sessionId, turn, durationMs });
       return;
     }

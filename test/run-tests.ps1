@@ -23,7 +23,10 @@ try {
     'test/switch.test.mjs',
     'test/lock.test.mjs',
     'test/fix-20261101.test.mjs',
-    'test/channel-command.test.mjs'
+    'test/channel-command.test.mjs',
+    'test/feishu-inbound.test.mjs',
+    'test/feishu-relay.test.mjs',
+    'test/outbox-blocked.test.mjs'
   )
   $code = 0
   foreach ($f in $files) {

@@ -120,3 +120,13 @@ pwsh -NoProfile -File D:\src\dsh\dsh-wechat-hitl\tools\restart-gateway.ps1 200
    指向目标群那个 bot 的配置目录；别用终端里的 `LARKSUITE_CLI_CONFIG_DIR` 顶替。
 6. 21001 → 看第 5 节，属人工在开放平台处理，代码侧无解。
 7. 改了 `lib/hitl-store.js` 或守护进程 → 必须重启守护进程（`-Action restart`）；DSH 侧插件是模块缓存，改插件代码才需要重启 DSH。
+
+## 9. 2026-11-10 会话回信修正（源码已验证，生产待重载）
+
+详见 [修复与验收记录](FIX-20261110-feishu-session-relay.md)。普通消息及会话码转发统一写队列，由宿主接收；不再并行启动不支持 preset 的 headless。回执区分已排队、宿主接收、最终结果，超时不自动重跑。按通道、来源聊天和 message ID 去重；不同 message ID 的相同文字仍视为不同指令。
+
+新版插件按 rpcId 识别远程回合，短回合也回结果，保留完整正文并回来源聊天；仍遵守现有推送开关和长度设置。永久 claim 仅用于飞书请求；崩溃后不自动重放，须先核对 DSH 状态。此保证不涵盖旧宿主或微信网关。
+
+部署顺序：先在独立宿主 PowerShell 执行 `pwsh -NoProfile -File ./tools/restart-feishu-daemon.ps1 -Action restart`；确认新心跳且 inbound=running。再在维护窗口安全重启 3080，使插件加载新版，并用来源聊天的一条新消息验收接收与最终回信。仅有心跳、spawn-failed 或脚本 exit=0 均不能替代真实收发验收。
+
+`/new` 本次仅修错误报告，不支持 preset 的 headless 限制仍存在。源码修改不需重新登记插件。回滚时恢复本次修改文件并按同一顺序重载；不覆盖生产 state 或凭据。

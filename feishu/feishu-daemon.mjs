@@ -76,6 +76,55 @@ function messageText(message) {
   return "";
 }
 
+/** One execution path: enqueue for the owning DSH host; never run a second headless turn. */
+async function queueRelay(sessionId, text, message, event, ack) {
+  let request;
+  try {
+    request = store.buildMessageRequest({
+      sessionId, text, title: "飞书转发", context: "来自飞书 · 会话遥控",
+      channel: "feishu", replyChatId: String(message.chat_id || ""),
+      sourceMessageId: message.message_id || message.id || event.message_id || event.id || event.event_id || event.header?.event_id || null,
+    });
+  } catch (error) {
+    await ack("未能接收消息：排队失败（" + String(error.message || error).slice(0, 180) + "）。");
+    return;
+  }
+  try {
+    const code = store.sessionCode(request.sessionId);
+    const disabled = !store.isResultPushEnabled() || !store.isSessionNotificationEnabled(request.sessionId);
+    await ack("已排队到会话 " + code + "，等待宿主接收。"
+      + (disabled ? "\n该会话的结果推送当前关闭；请在 DSH 查看结果。" : "\n宿主接收和回合结果将分别通知。"));
+  } catch (error) {
+    store.log({ op: "relay-ack-failed", id: request.id, error: String(error).slice(0, 180) });
+  }
+}
+
+/** Delivery monitoring reports admission separately from completion, without replaying or cancelling. */
+async function reportRelayDelivery(now = Date.now()) {
+  for (const req of Object.values(store.loadState().requests ?? {})) {
+    if (req.channel !== "feishu" || !req.replyChatId || req.mode !== "message") continue;
+    const delivery = String(req.delivery ?? "");
+    let report = null;
+    let text = null;
+    if (/^(?:controller-failed|failed|not-live)/.test(delivery) || req.status === "failed") {
+      report = "failed";
+      text = "会话消息未确认接收：" + (delivery || req.status) + "。可能已进入宿主，请在 DSH 核对；未自动重试。";
+    } else if (delivery === "injected") {
+      report = "accepted";
+      text = "宿主已接收会话 " + store.sessionCode(req.sessionId) + " 的消息，等待回合结果。";
+    } else if (req.status === "expired" || Number(req.expiresAt) < now) {
+      report = "expired";
+      text = "会话消息等待接收已过期；未确认执行，请在 DSH 核对。未自动重试。";
+    } else if (now - req.createdAt >= 60000) {
+      report = "waiting";
+      text = "会话消息仍未确认接收，请检查 DSH 宿主。消息可能稍后执行，未取消、未自动重试。";
+    }
+    if (!report || req.relayReport === report || ["accepted", "failed", "expired"].includes(req.relayReport)) continue;
+    const sent = await store.feishuSend(req.replyChatId, text, { type: "chat_id" });
+    if (sent.code === 0) store.markRelayReport(req.id, report);
+  }
+}
+
 async function handleInbound(event) {
   const message = findMessage(event);
   if (!message) return;
@@ -95,7 +144,11 @@ async function handleInbound(event) {
   }
   const target = chatId || current.id;
 
-  const ack = async (text2) => { if (text2) await store.feishuSend(target, text2, { type: "chat_id" }); };
+  const ack = async (text2) => {
+    if (!text2) return;
+    const sent = await store.feishuSend(target, text2, { type: "chat_id" });
+    if (sent.code !== 0) throw new Error("飞书回执发送失败，退出码 " + sent.code);
+  };
 
   // 1) 推送总开关的自然表述（与微信侧同一套解析）
   const pushCmd = store.parsePushCommand(text);
@@ -123,9 +176,12 @@ async function handleInbound(event) {
     await ack("⏳ 正在「" + who + "」里创建新会话，通常半分钟到一分钟。");
     const run = await store.runHeadlessTurn(binding.sessionId, store.buildNewSessionInstruction({ title })).catch((error) => ({ error: String(error) }));
     const parsed = store.parseNdjson(run?.stdout ?? "");
-    const created = store.parseNewSessionMarker(parsed.text);
+    const failed = run?.error || parsed.error || run?.timeout || !run?.ok || run?.code !== 0;
+    const created = failed ? null : store.parseNewSessionMarker(parsed.text);
     if (!created) {
-      const why = run?.error ? "执行出错：" + String(run.error).slice(0, 200) : "没拿到 new_session 回执";
+      const why = run?.error || parsed.error
+        ? "执行出错：" + String(run.error || parsed.error).slice(0, 240)
+        : (run?.timeout ? "执行超时，未确认创建；请在 DSH 核对，勿直接重试" : "未成功完成（退出码 " + run?.code + "），没拿到 new_session 回执");
       await ack("没建成：" + why + "\n原样回你：" + String(parsed.text ?? "").slice(0, 300));
       return;
     }
@@ -154,11 +210,7 @@ async function handleInbound(event) {
     // 普通消息：绑定了会话就转发，否则给提示
     const binding = store.getBinding();
     if (binding?.sessionId) {
-      const request = store.buildMessageRequest({ sessionId: binding.sessionId, text, context: "来自飞书 · 绑定会话" });
-      const run = await store.runHeadlessTurn(binding.sessionId, text).catch((error) => ({ error: String(error) }));
-      const parsed = store.parseNdjson(run?.stdout ?? "");
-      store.markDelivered(request.id, "feishu-headless");
-      await ack(parsed.text ? String(parsed.text).slice(0, 3500) : "已转给会话，但没有拿到文本结果。");
+      await queueRelay(binding.sessionId, text, message, event, ack);
       return;
     }
     await ack("没绑定会话。\n/l 看可驱动会话清单，/s <回复id 或 会话码> 绑定后再发普通消息。");
@@ -174,9 +226,7 @@ async function handleInbound(event) {
     return;
   }
   if (routed.kind === "relay") {
-    const run = await store.runHeadlessTurn(routed.sessionId, routed.text).catch((error) => ({ error: String(error) }));
-    const parsed = store.parseNdjson(run?.stdout ?? "");
-    await ack(parsed.text ? String(parsed.text).slice(0, 3500) : "已转给会话。");
+    await queueRelay(routed.sessionId, routed.text, message, event, ack);
     return;
   }
   const request = routed.request;
@@ -247,14 +297,21 @@ function startInbound() {
 }
 
 // ── 排空 + 心跳 ─────────────────────────────────────────────────────────────
+let draining = false;
 async function tick() {
+  if (draining) return;
+  draining = true;
   try {
+    store.expireStale();
+    await reportRelayDelivery();
     const result = await store.drainOutbox();
     heartbeat({ lastDrain: result });
   } catch (error) {
     lastError = "drain: " + String(error);
     store.log({ op: "feishu-daemon-error", stage: "drain", error: lastError });
     heartbeat();
+  } finally {
+    draining = false;
   }
 }
 

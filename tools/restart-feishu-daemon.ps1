@@ -18,7 +18,10 @@ param(
   [ValidateSet('start','stop','status','restart')]
   [string]$Action = 'start',
   [int]$TimeoutSeconds = 30,
-  [string]$ConfigDir = ''
+  [string]$ConfigDir = '',
+  # 2026-11-14：仅用于自检/单测时指向别的心跳文件；不传则仍是 state\feishu-daemon.json。
+  # 注意：不能叫 -BeatFile——PowerShell 变量大小写不敏感，会和脚本内的 $beatFile 撞车（实测被覆盖回生产路径）。
+  [string]$BeatFileOverride = ''
 )
 
 $ErrorActionPreference = 'Continue'
@@ -26,22 +29,40 @@ $root = 'D:\src\dsh\dsh-wechat-hitl'
 $daemon = Join-Path $root 'feishu\feishu-daemon.mjs'
 $beatFile = Join-Path $root 'state\feishu-daemon.json'
 $outFile = Join-Path $root 'state\feishu-daemon.out'
+if ($BeatFileOverride) { $beatFile = $BeatFileOverride }
 
 function Get-Beat {
   if (-not (Test-Path $beatFile)) { return $null }
   try { return Get-Content $beatFile -Raw | ConvertFrom-Json } catch { return $null }
 }
 
-function Show-Status {
+function Get-StatusReport {
+  # 2026-11-14：拆出结构化状态，让 -Action status 能给三态退出码。
+  # 原本 Show-Status 用 Write-Output 打行 + return 布尔，调用方一 Pipe 就丢掉布尔，只能恒 exit 0（假绿灯）。
   $beat = Get-Beat
-  if (-not $beat) { Write-Output '心跳文件不存在：守护进程没起过'; return $false }
+  if (-not $beat) {
+    return [pscustomobject]@{ text = '心跳文件不存在：守护进程没起过（状态未知，不是健康）'; alive = $false; known = $false }
+  }
   $age = [math]::Round(((Get-Date).ToUniversalTime().ToFileTime() / 10000 - 11644473600000 - [double]$beat.tickAt) / 1000, 1)
   $alive = $age -le 30 -and $beat.inbound -eq "running"
-  Write-Output ("daemon pid=" + $beat.pid + "  alive=" + $alive + "  heartbeatAgeSec=" + $age + "  inbound=" + $beat.inbound + "  lastError=" + $beat.lastError)
-  return $alive
+  $text = "daemon pid=" + $beat.pid + "  alive=" + $alive + "  heartbeatAgeSec=" + $age + "  inbound=" + $beat.inbound + "  lastError=" + $beat.lastError
+  return [pscustomobject]@{ text = $text; alive = $alive; known = $true }
 }
 
-if ($Action -eq 'status') { Show-Status | Out-Null; exit 0 }
+function Show-Status {
+  $report = Get-StatusReport
+  Write-Output $report.text
+  return $report.alive
+}
+
+if ($Action -eq 'status') {
+  # 三态退出码（与 tools/test-feishu-health.ps1 一致）：0=健康 1=不健康 2=未知（心跳文件缺失）
+  $report = Get-StatusReport
+  Write-Output $report.text
+  if (-not $report.known) { exit 2 }
+  if ($report.alive) { exit 0 }
+  exit 1
+}
 
 if ($Action -eq 'stop' -or $Action -eq 'restart') {
   $beat = Get-Beat

@@ -50,8 +50,10 @@ feishu-daemon 事件子进程（lark-cli event consume im.message.receive_v1，�
 | `bin/fx-hitl.mjs` | 飞书侧 CLI（status/channel/target/probe/notify/ask/switch/push/sessions/bind/daemon/list） |
 | `bin/wx-hitl.mjs` | 微信侧 CLI，强制 `DSH_HITL_CHANNEL=wechat`，与飞书互不干扰 |
 | `feishu/feishu-daemon.mjs` | 飞书守护进程：排空发件箱 + 长连接事件消费 + 心跳 + 首条入站自动落点 |
+| `tools/test-feishu-health.ps1` | **只读四层健康探针**（2026-11-14）：daemon/入站 · 进程身份 · `:3082` 就绪 · 回信重试；退出码 0/1/2 |
+| `tools/feishu-reply-health.mjs` | 探针的 L4 帮手：只读打开 `orchestrator.sqlite` 数 `effect(kind=reply, attempts>0)` |
 | `state/lark-config-dir.txt` | 飞书出口用哪个 lark-cli 配置目录（本机唯一事实源，换 bot 改这一行就够） |
-| `tools/restart-feishu-daemon.ps1` | 起/停/查守护进程（WMI 脱离 DSH Job，做法同 restart-gateway.ps1） |
+| `tools/restart-feishu-daemon.ps1` | 起/停/查守护进程（WMI 脱离 DSH Job，做法同 restart-gateway.ps1）；`-Action status` 给 0/1/2 三态退出码 |
 
 ## 4. 用法
 
@@ -109,6 +111,38 @@ pwsh -NoProfile -File D:\src\dsh\dsh-wechat-hitl\tools\restart-gateway.ps1 200
 微信侧仍需 contextToken：你在微信里给 bot 发一句话即可刷新（见 wechat-hitl skill 第 5 条排障顺序）。
 
 ## 8. 排障顺序（飞书）
+
+**第 0 步（2026-11-14 起）：先跑只读四层探针，再按下面逐条深挖。**
+
+```powershell
+# 人读
+pwsh -NoProfile -File D:\src\dsh\dsh-wechat-hitl\tools\test-feishu-health.ps1
+# 机器读（单对象 JSON）
+pwsh -NoProfile -File D:\src\dsh\dsh-wechat-hitl\tools\test-feishu-health.ps1 -Json
+```
+
+四层与判据：
+
+| 层 | 看什么 | 典型 reason |
+| --- | --- | --- |
+| L1 daemon | 心跳是否 15s 内更新**且推进**、`inbound` 是否真在收、pid 是否还在 | `heartbeat-stale` / `heartbeat-not-advancing` / `inbound-spawn-failed` / `inbound-blocked-policy` / `daemon-pid-gone` |
+| L2 instance | 进程身份与单实例（CIM 枚举，命令行为 `feishu-daemon.mjs` 的 **node/bun 进程**；`cmd.exe` 壳不计入） | `daemon-process-not-found` / `multiple-instances` / `instance-mismatch` / `process-enum-denied` |
+| L3 orchestrator | superagent `:3082` 的 `runtime`/`feishu` 是否 ready、setup 是否有 problem | `connect-failed` / `route-not-activated` / `runtime-<state>` / `setup-problem` |
+| L4 reply | 回信是否在无限重试（只读 `orchestrator.sqlite` 的 `effect` 表；退化读健康报告） | `reply-retry-storm` / `reply-error` / `reply-health-unavailable` |
+
+退出码：**0 = ready，1 = unhealthy，2 = unknown**。
+
+- `unknown` **不等于健康**：它表示"这次读不到/权限不足/超时"，也可能是 `-Skip*` 主动跳过。**不得把 2 当 0 用**，也不得据此自动起或杀进程。
+- **正式运行位置是宿主 PowerShell 或计划任务（沙箱外）**。在受限会话里跑时 L2 常见 `process-enum-denied`（CIM 枚举被拒），这是设计意图：宁可 unknown，也不要把"读不到"当成"进程没了"。
+- 心跳新鲜**不代表**入站在收：L1 会同时看 `inbound`，这正是 2026-11-10→13 入站静默三天却没报警的原因。
+- L4 看的是**回信重试**，不是网络连通性；`pending>0` 说明有回执在无限重试（通常是 `--reply-in-thread` 撞 `server_error 2200`）。
+- `tools/restart-feishu-daemon.ps1 -Action status` 也走同一套三态退出码（原先恒 `exit 0` 的假绿灯已修）。
+- 受限会话里 L2 变成 `unknown` 时会附带 `pidAlive` / `startTimeDriftSec` / `duplicateCheck=unavailable`——能证明"那个 pid 在、创建时间对得上"，但**不能**证明"只有一个实例"，所以状态不给绿。
+- **壳与真身要分清**：`restart-feishu-daemon.ps1` 用 `cmd.exe /c "...node ...feishu-daemon.mjs"` 启动，这个 `cmd.exe` 会一直活着、命令行里也含 `feishu-daemon.mjs`。L2 只把**首个 token 是 node/bun** 的进程算实例，壳记在 detail 的 `wrappers`（如 `wrappers=35408:cmd.exe`，`matchedProcesses=2` 但 `count=1` 才是对的）。2026-11-14 首版曾把壳判成第二个实例，已修。
+- **时间戳一律看偏移**：接口给的是 UTC（`…T04:04:39Z`），探针统一转成本地 `2026-11-14T12:04:39+08:00`。注意 PowerShell 的 `ConvertFrom-Json` 会把 ISO 串再转成 `[datetime]`，再 `[string]` 后偏移就丢了——人读时曾把 12:04 看成 04:04。
+- **运行时来源要留意**：探针的 `instance.detail.executable` 会显示 daemon 实际跑在哪个 `node.exe` 上。2026-11-14 实测它是 `…\cursor-agent\versions\2026.11.11-b912975\node.exe`（Cursor 自带 node），因为 `restart-feishu-daemon.ps1` 用 `(Get-Command node).Source` 依赖 PATH。运行中的进程不受影响，但"换 node 来源再重启"是未受控变量，重启后应回看这一行。
+- `-ProcessListFile <json>` 是**自检/宿主复核**用的注入缝：不经 CIM 直接喂进程清单（字段 `ProcessId/CreationDate/ExecutablePath/CommandLine`），用于验证身份比对逻辑；正常巡检不要用它。
+  自检：`pwsh -NoProfile -File test/test-feishu-health.ps1`（21 例，全用 `$env:TEMP` 假数据，不碰生产 state）。
 
 1. `node $fx status` → 看 `channel`、`switch.state`、`target.id`、`daemon.inbound`、`daemon.hint`。
 2. `state/feishu-daemon.json` 的 `hint`：`落点未设置` / `飞书应用权限被拦（21001）` / null。

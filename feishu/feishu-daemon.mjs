@@ -19,36 +19,164 @@
 process.env.DSH_HITL_CHANNEL = "feishu";
 
 const { spawn } = await import("node:child_process");
-const { writeFileSync } = await import("node:fs");
+const {
+  writeFileSync, readFileSync, renameSync, unlinkSync, existsSync, mkdirSync,
+  rmSync, lstatSync,
+} = await import("node:fs");
 const { join } = await import("node:path");
 
 const store = await import("../lib/hitl-store.js");
 
 const DRAIN_MS = 5000;
 const HEARTBEAT_MS = 5000;
+const STOP_POLL_MS = 1000;
 const startedAt = Date.now();
+const beatFile = join(store.PATHS.stateDir, "feishu-daemon.json");
+// 用目录做锁：mkdir 是原子操作，避免“文件已创建但内容还没写入”的 TOCTOU 窗口。
+const lockDir = join(store.PATHS.stateDir, "feishu-daemon.lock");
+const lockOwnerFile = join(lockDir, "owner.json");
+const stopFile = join(store.PATHS.stateDir, "feishu-daemon.stop");
 let inboundState = process.env.DSH_HITL_FEISHU_NO_INBOUND === "1" ? "disabled" : "starting";
 let lastError = null;
 let child = null;
+let stopping = false;
+let inboundReadyAt = 0;
+let lastDrainAt = 0;
+let heartbeatSeq = 0;
+let inboundGeneration = 0;
+let inboundRetry = 0;
+let retryTimer = null;
+
+function pidAlive(pid) {
+  try { process.kill(Number(pid), 0); return true; }
+  catch (error) { return error?.code === "EPERM"; }
+}
+
+/**
+ * 单实例锁：同一 stateDir 只允许一个 daemon。
+ * 锁里记录 pid + startedAt；只有确认旧 pid 已死才抢占，避免两个进程抢同一份 Feishu 事件订阅。
+ */
+function acquireInstanceLock() {
+  try { mkdirSync(store.PATHS.stateDir, { recursive: true }); } catch {}
+  const body = JSON.stringify({ pid: process.pid, startedAt, createdAt: Date.now() });
+
+  // 只在“目录锁不存在”时创建；mkdir 成功即拥有锁。绝不删除“没有 owner”的锁目录：
+  // 那可能是另一个进程刚 mkdir、还没来得及写 owner 的中间态；删除会造成双实例。
+  const create = () => {
+    try {
+      mkdirSync(lockDir);
+    } catch (error) {
+      if (error?.code !== "EEXIST") return false;
+      // 兼容旧版的文件锁：读 pid，活着就拒绝；死了才清掉文件。
+      try {
+        const stat = lstatSync(lockDir);
+        if (stat.isFile()) {
+          let legacy = null;
+          try { legacy = JSON.parse(readFileSync(lockDir, "utf8")); } catch {}
+          if (legacy?.pid && pidAlive(legacy.pid)) {
+            store.log({ op: "feishu-daemon-already-running", pid: legacy.pid, legacy: true });
+            return false;
+          }
+          try { unlinkSync(lockDir); } catch {}
+          return create();
+        }
+      } catch {}
+      // 目录锁：只按 owner.json 判断；owner 缺失/不可读时拒绝启动，等待人工/脚本清理。
+      let owner = null;
+      try { owner = JSON.parse(readFileSync(lockOwnerFile, "utf8")); } catch {}
+      if (owner?.pid && pidAlive(owner.pid)) {
+        store.log({ op: "feishu-daemon-already-running", pid: owner.pid, startedAt: owner.startedAt });
+        return false;
+      }
+      if (owner?.pid) {
+        // 抢占前再读一次 owner：如果另一个进程刚好接手并写入新 pid，不能删它的锁。
+        let recheck = null;
+        try { recheck = JSON.parse(readFileSync(lockOwnerFile, "utf8")); } catch {}
+        if (recheck?.pid && pidAlive(recheck.pid)) return false;
+        // owner 明确记录且 pid 已死：可安全抢占一次。
+        try { rmSync(lockDir, { recursive: true, force: true }); } catch {}
+        return create();
+      }
+      store.log({ op: "feishu-daemon-lock-unknown", note: "lock dir exists without readable owner; refusing to steal" });
+      return false;
+    }
+    try {
+      writeFileSync(lockOwnerFile, body);
+      return true;
+    } catch {
+      // 创建目录后写 owner 失败：清掉自己刚建的空目录，避免留下无主锁。
+      try { rmSync(lockDir, { recursive: true, force: true }); } catch {}
+      return false;
+    }
+  };
+  const acquired = create();
+  if (!acquired) return false;
+  // 抢占死锁时仍可能两个进程同时 rm/create：写完后必须回读确认 owner 是自己，
+  // 否则说明锁已被另一个进程替换，主动退出，避免“两个都以为持有锁”。
+  try {
+    const owner = JSON.parse(readFileSync(lockOwnerFile, "utf8"));
+    if (Number(owner?.pid) !== process.pid) {
+      store.log({ op: "feishu-daemon-lock-lost", ownerPid: owner?.pid, note: "another process replaced the lock" });
+      releaseInstanceLock();
+      return false;
+    }
+    return true;
+  } catch {
+    releaseInstanceLock();
+    return false;
+  }
+}
+
+function releaseInstanceLock() {
+  try {
+    const owner = JSON.parse(readFileSync(lockOwnerFile, "utf8"));
+    if (Number(owner?.pid) === process.pid) rmSync(lockDir, { recursive: true, force: true });
+  } catch {}
+}
+
+if (!acquireInstanceLock()) {
+  console.error("[feishu-daemon] another instance is already running; refuse to start a second one");
+  process.exit(3);
+}
+process.on("exit", releaseInstanceLock);
 
 function heartbeat(extra = {}) {
+  let target = { id: "", type: "open_id" };
+  let switchState = "unknown";
+  try { target = store.getFeishuTarget(); } catch {}
+  try { switchState = store.getControl().state; } catch {}
+  const hint =
+    inboundState === "blocked:policy"
+      ? "飞书应用权限被拦（21001）：去开放平台开事件订阅+发消息权限并发布"
+      : inboundState === "blocked:spawn"
+        ? "入站连续启动失败（spawn）：检查 lark-cli/权限/宿主，勿在受限会话里启动"
+        : inboundState === "spawn-failed"
+          ? "入站启动失败；守护进程会退避重试"
+          : (!target.id ? "落点未设置：fx-hitl target --id <open_id|chat_id>" : null);
   const payload = {
+    schemaVersion: 2,
     pid: process.pid,
     startedAt,
     tickAt: Date.now(),
+    seq: ++heartbeatSeq,
+    childPid: child?.pid ?? null,
     inbound: inboundState,
+    inboundReadyAt,
+    lastDrainAt,
     lastError,
-    // 让人一眼知道「通道为什么没消息」：no-target / blocked:policy / running
-    hint: inboundState === "blocked:policy"
-      ? "飞书应用权限被拦（21001）：去开放平台开事件订阅+发消息权限并发布"
-      : (!store.getFeishuTarget().id ? "落点未设置：fx-hitl target --id <open_id|chat_id>" : null),
-    target: store.getFeishuTarget(),
-    switchState: store.getControl().state,
+    hint,
+    target,
+    switchState,
     ...extra,
   };
+  const tmp = beatFile + ".tmp-" + process.pid;
   try {
-    writeFileSync(join(store.PATHS.stateDir, "feishu-daemon.json"), JSON.stringify(payload, null, 2));
-  } catch {}
+    writeFileSync(tmp, JSON.stringify(payload, null, 2));
+    renameSync(tmp, beatFile);
+  } catch (error) {
+    // 心跳写失败不能让“看起来死了”变成无证据的静默：至少写一条日志。
+    try { store.log({ op: "feishu-heartbeat-error", error: String(error) }); } catch {}
+  }
 }
 
 // ── 入站解析 ────────────────────────────────────────────────────────────────
@@ -234,12 +362,60 @@ async function handleInbound(event) {
   await ack(store.formatResolved(updated) + "\n（答复已登记，DSH 侧会注入原会话。）");
 }
 
-// ── 事件流子进程 ────────────────────────────────────────────────────────────
+// ── 事件流子进程（2026-11-15：单实例 + 状态机 + 退避）──────────────────────
+function scheduleInboundRetry(delayMs) {
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  if (stopping) return;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    if (!stopping) startInbound();
+  }, Math.max(0, delayMs));
+}
+
+function onInboundFailure(gen, error) {
+  if (gen !== inboundGeneration) return;
+  // 使这个 child 后续的 exit 回调失效，避免 error + exit 各触发一次重试。
+  inboundGeneration += 1;
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  child = null;
+  inboundReadyAt = 0;
+  inboundRetry += 1;
+  lastError = String(error?.message || error);
+  inboundState = inboundRetry >= 3 ? "blocked:spawn" : "spawn-failed";
+  store.log({ op: "feishu-inbound-error", stage: "spawn", attempt: inboundRetry, error: lastError });
+  heartbeat();
+  if (inboundRetry >= 3) {
+    store.log({ op: "feishu-inbound-blocked", reason: "spawn failed 3x", error: lastError, retryInMin: 10 });
+    scheduleInboundRetry(10 * 60 * 1000);
+  } else {
+    const delays = [1000, 2000, 4000];
+    scheduleInboundRetry(delays[Math.min(inboundRetry - 1, delays.length - 1)]);
+  }
+}
+
+function markInboundReady(proof) {
+  if (inboundState === "running" && inboundReadyAt > 0) return;
+  inboundState = "running";
+  inboundReadyAt = Date.now();
+  inboundRetry = 0;
+  store.log({ op: "feishu-inbound-ready", pid: child?.pid, proof: String(proof).slice(0, 160) });
+  heartbeat();
+}
+
 function startInbound() {
-  if (process.env.DSH_HITL_FEISHU_NO_INBOUND === "1") return;
+  if (stopping) return;
+  if (process.env.DSH_HITL_FEISHU_NO_INBOUND === "1") {
+    inboundState = "disabled";
+    heartbeat();
+    return;
+  }
+  const gen = ++inboundGeneration;
+  inboundState = "starting";
+  heartbeat();
+  let c;
   const env = store.larkCliEnv(store.FEISHU.configDir);
   try {
-    child = spawn(process.execPath, [store.FEISHU.runJs, "event", "consume", store.FEISHU.eventKey], {
+    c = spawn(process.execPath, [store.FEISHU.runJs, "event", "consume", store.FEISHU.eventKey], {
       cwd: store.PATHS.workdir,
       env,
       // 必须保持 stdin 打开：lark-cli event consume 把 stdin EOF 当成退出信号（原 "ignore" 会让它立刻退出）
@@ -247,22 +423,24 @@ function startInbound() {
       windowsHide: true,
     });
   } catch (error) {
-    inboundState = "spawn-failed";
-    lastError = String(error);
-    store.log({ op: "feishu-inbound-error", stage: "spawn", error: lastError });
+    onInboundFailure(gen, error);
     return;
   }
-  inboundState = "running";
-  store.log({ op: "feishu-inbound-start", pid: child.pid, eventKey: store.FEISHU.eventKey });
+  child = c;
+  c.on("error", (error) => onInboundFailure(gen, error));
 
   let buffer = "";
-  child.stdout.on("data", (chunk) => {
+  let childLastError = "";
+  c.stdout.on("data", (chunk) => {
+    if (gen !== inboundGeneration) return;
     buffer += chunk.toString("utf8");
     let index;
     while ((index = buffer.indexOf("\n")) >= 0) {
       const line = buffer.slice(0, index).trim();
       buffer = buffer.slice(index + 1);
       if (!line) continue;
+      // lark-cli 不同版本可能把 ready 打到 stdout 或 stderr；两边都认。
+      if (/\[event\] ready|websocket: connected/i.test(line)) markInboundReady(line);
       let event = null;
       try { event = JSON.parse(line); } catch { continue; }
       store.log({ op: "feishu-inbound", preview: line.slice(0, 160) });
@@ -272,28 +450,41 @@ function startInbound() {
       });
     }
   });
-  child.stderr.on("data", (chunk) => {
+  c.stderr.on("data", (chunk) => {
+    if (gen !== inboundGeneration) return;
     const text = chunk.toString("utf8").trim().slice(0, 400);
     if (!text) return;
+    childLastError = text;
     lastError = text;
     store.log({ op: "feishu-inbound-stderr", text });
+    // 只有真正连上才把 running 当健康态；spawn 成功 != 事件订阅已就绪。
+    if (/\[event\] ready|websocket: connected/i.test(text)) markInboundReady(text);
   });
-  child.on("exit", (code) => {
+  c.on("exit", (code) => {
+    if (gen !== inboundGeneration) return;
+    const wasReady = inboundReadyAt > 0;
     child = null;
+    inboundReadyAt = 0;
+    if (stopping) { heartbeat({ inbound: "stopped" }); return; }
     // 21001（数据安全策略拦截）不是「掉线」，是权限没开：每 10 秒重连只会刷爆日志。
-    // 判定为 policy 阻塞就按 10 分钟退避，并把原因写进心跳，让 fx-hitl daemon status 一眼看到。
-    const policyBlocked = /21001|data security policy|access_denied/i.test(String(lastError ?? ""));
+    // 只看本 child 的 stderr，避免上一代 child 的错误影响本次分类。
+    const policyBlocked = /21001|data security policy|access_denied/i.test(String(childLastError || ""));
     if (policyBlocked) {
       inboundState = "blocked:policy";
       store.log({ op: "feishu-inbound-blocked", reason: "21001 数据安全策略拦截：事件订阅/发送权限未开", retryInMin: 10 });
-      if (!stopping) setTimeout(() => { if (!stopping) startInbound(); }, 10 * 60 * 1000);
+      heartbeat();
+      scheduleInboundRetry(10 * 60 * 1000);
     } else {
       inboundState = "exited:" + code;
-      store.log({ op: "feishu-inbound-exit", code });
-      if (!stopping) setTimeout(() => { if (!stopping) startInbound(); }, 10000);
+      // 未 ready 就退出视为启动失败，按 10/20/30/40/50/60s 退避；ready 后掉线仍 10s 快速重连。
+      if (!wasReady) inboundRetry += 1;
+      const delayMs = wasReady ? 10000 : Math.min(60000, 10000 * Math.max(1, inboundRetry));
+      store.log({ op: "feishu-inbound-exit", code, wasReady, retryInMs: delayMs });
+      heartbeat();
+      scheduleInboundRetry(delayMs);
     }
-    heartbeat();
   });
+  store.log({ op: "feishu-inbound-start", pid: c.pid, eventKey: store.FEISHU.eventKey });
 }
 
 // ── 排空 + 心跳 ─────────────────────────────────────────────────────────────
@@ -305,6 +496,7 @@ async function tick() {
     store.expireStale();
     await reportRelayDelivery();
     const result = await store.drainOutbox();
+    lastDrainAt = Date.now();
     heartbeat({ lastDrain: result });
   } catch (error) {
     lastError = "drain: " + String(error);
@@ -315,20 +507,50 @@ async function tick() {
   }
 }
 
-let stopping = false;
 function shutdown(reason) {
+  if (stopping) return;
   stopping = true;
-  try { if (child) child.kill(); } catch {}
+  inboundState = "stopped";
+  inboundReadyAt = 0;
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  const c = child;
+  child = null;
+  if (c?.stdin) { try { c.stdin.end(); } catch {} }
+  if (c) setTimeout(() => { try { c.kill(); } catch {} }, 1000);
   store.log({ op: "feishu-daemon-stop", reason });
   heartbeat({ stoppedAt: Date.now(), inbound: "stopped" });
-  setTimeout(() => process.exit(0), 200);
+  setTimeout(() => process.exit(0), 1500);
 }
+
 process.on("SIGINT", () => shutdown("sigint"));
 process.on("SIGTERM", () => shutdown("sigterm"));
+process.on("uncaughtException", (error) => {
+  try { store.log({ op: "feishu-daemon-fatal", signal: "uncaughtException", error: String(error?.stack || error) }); } catch {}
+  try { heartbeat({ inbound: "fatal", lastError: String(error?.message || error) }); } catch {}
+  process.exit(1);
+});
+process.on("unhandledRejection", (error) => {
+  try { store.log({ op: "feishu-daemon-fatal", signal: "unhandledRejection", error: String(error?.stack || error) }); } catch {}
+  try { heartbeat({ inbound: "fatal", lastError: String(error?.message || error) }); } catch {}
+  process.exit(1);
+});
 
 store.log({ op: "feishu-daemon-start", pid: process.pid, configDir: store.FEISHU.configDir });
 heartbeat();
-startInbound();
-await tick();
-setInterval(tick, DRAIN_MS);
+// 先关心跳：即使首次 drain 卡住，也不能让状态看起来“死了”。
 setInterval(() => heartbeat(), HEARTBEAT_MS);
+startInbound();
+tick().catch((error) => {
+  lastError = "first-tick: " + String(error);
+  store.log({ op: "feishu-daemon-error", stage: "first-tick", error: lastError });
+  heartbeat();
+});
+setInterval(tick, DRAIN_MS);
+setInterval(() => {
+  try {
+    if (existsSync(stopFile)) {
+      unlinkSync(stopFile);
+      shutdown("stop-file");
+    }
+  } catch {}
+}, STOP_POLL_MS);

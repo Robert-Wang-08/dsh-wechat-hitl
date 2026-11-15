@@ -25,6 +25,7 @@ import {
   getDecisionPush, setDecisionPush, describeDecisionPush, describeChannelControl, parsePushCommand,
   getBinding, setBinding, clearBinding, listSessions, listSessionsV2, sessionExists, pickSession, formatSessionList, buildMessageRequest,
   getSessionNotificationLimits, setSessionNotificationLimits, clearSessionNotificationLimits, NOTIFICATION_LIMIT_KINDS,
+  feishuDaemonAlive,
 } from "../lib/hitl-store.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -208,6 +209,7 @@ if (command === "notify") {
     decisionPush: getDecisionPush(),
     resultPush: getResultPush(),
     sending: control.state === "running",
+    feishuDaemon: feishuDaemonAlive(),
     outboxQueued: Array.isArray(state.outbox) ? state.outbox.length : 0,
     pendingCount: pending.length,
     pending: pending.map((req) => ({ handle: req.handle ?? null, id: req.id, mode: req.mode, kind: req.kind, question: req.question.slice(0, 80), sessionId: req.sessionId, expiresAt: new Date(req.expiresAt).toISOString() })),

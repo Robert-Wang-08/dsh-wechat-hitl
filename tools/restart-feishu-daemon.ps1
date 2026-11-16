@@ -26,7 +26,7 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-$root = 'D:\src\dsh\dsh-wechat-hitl'
+$root = Split-Path -Parent $PSScriptRoot
 $daemon = Join-Path $root 'feishu\feishu-daemon.mjs'
 $beatFile = if ($BeatFileOverride) { $BeatFileOverride } else { Join-Path $root 'state\feishu-daemon.json' }
 $stateDir = Split-Path -Parent $beatFile
@@ -139,7 +139,7 @@ function Stop-Daemon {
   return $true
 }
 
-function Start-Daemon {
+function Start-DaemonCore {
   $procs = Get-DaemonProcesses
   if (-not $script:processEnumOk) {
     Write-Host '!!! 无法枚举进程（CIM 被拒）：拒绝启动，避免再起一个重复 daemon'
@@ -198,6 +198,18 @@ function Start-Daemon {
   }
   Write-Host ('!!! 守护进程在 ' + $TimeoutSeconds + 's 内没有进入 ready，看 ' + $outFile)
   return 1
+}
+
+# Serialize every supported startup path. Kernel lock survives no crash and needs no stale-file deletion.
+function Start-Daemon {
+  $key = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes([IO.Path]::GetFullPath($stateDir).ToLowerInvariant())))
+  $gate = [Threading.Mutex]::new($false, ('Global\DSH-Feishu-Start-' + $key))
+  $held = $false
+  try {
+    try { $held = $gate.WaitOne(0) } catch [Threading.AbandonedMutexException] { $held = $true }
+    if (-not $held) { Write-Host 'startup already in progress; refusing concurrent launcher'; return 2 }
+    return (Start-DaemonCore)
+  } finally { if ($held) { $gate.ReleaseMutex() }; $gate.Dispose() }
 }
 
 switch ($Action) {

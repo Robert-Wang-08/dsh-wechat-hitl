@@ -164,3 +164,9 @@ pwsh -NoProfile -File D:\src\dsh\dsh-wechat-hitl\tools\test-feishu-health.ps1 -J
 部署顺序：先在独立宿主 PowerShell 执行 `pwsh -NoProfile -File ./tools/restart-feishu-daemon.ps1 -Action restart`；确认新心跳且 inbound=running。再在维护窗口安全重启 3080，使插件加载新版，并用来源聊天的一条新消息验收接收与最终回信。仅有心跳、spawn-failed 或脚本 exit=0 均不能替代真实收发验收。
 
 `/new` 本次仅修错误报告，不支持 preset 的 headless 限制仍存在。源码修改不需重新登记插件。回滚时恢复本次修改文件并按同一顺序重载；不覆盖生产 state 或凭据。
+
+## 10. 五分钟心跳监督（2026-11-16）
+
+`tools/register-feishu-supervisor.ps1 -Action Install -Mode Repair` 注册独立用户计划任务；`-Action Verify` 核查、`-Action Uninstall` 撤销。内核mutex串行监督及start，核对完整入口/PID/创建时间/心跳推进，只有确认死亡且无unknown才启动；活着但不健康只告警。incident首次、15分钟合并及恢复通知经独立CLI出站，失败持久重试。
+
+测试：`node --test test/feishu-supervisor.test.mjs`。运行数据：`state/feishu-supervisor-state.json`、`feishu-supervisor-latest.json`、`feishu-supervisor.log`。任务依赖登录用户，不保证注销/断电期间工作；安装不要求重启DSH或现有daemon。完整安装/回滚/限制见总仓库 `docs/ops/feishu-supervisor-20261116.md`。

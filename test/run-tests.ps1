@@ -27,7 +27,8 @@ try {
     'test/feishu-inbound.test.mjs',
     'test/feishu-relay.test.mjs',
     'test/outbox-blocked.test.mjs',
-    'test/feishu-daemon-alive.test.mjs'
+    'test/feishu-daemon-alive.test.mjs',
+    'test/feishu-supervisor.test.mjs'
   )
   $code = 0
   foreach ($f in $files) {

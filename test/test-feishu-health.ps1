@@ -145,7 +145,7 @@ Assert-Instance 'instance-two-real' $l2dir (Write-ProcList 'p8' @($goodProc, @{ 
 
 Write-Output '== L3 时间戳呈现（UTC 不得被当本地）=='
 # 软用例：3082 不可达时跳过，不判失败（宿主上跑才有意义）
-$liveRaw = & pwsh -NoProfile -File $probe -SkipProcessCheck -SkipReply -NoWait -Json
+$liveRaw = & pwsh -NoProfile -File $probe -StateDir $l2dir -SkipProcessCheck -SkipReply -NoWait -Json
 $liveCode = $LASTEXITCODE
 $live = $null
 try { $live = (($liveRaw -join ([string][char]10)).Trim()) | ConvertFrom-Json } catch { $live = $null }

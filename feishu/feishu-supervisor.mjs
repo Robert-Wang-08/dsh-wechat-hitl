@@ -55,9 +55,23 @@ export function evaluateDaemon(input = {}) {
 export function evaluateOverall(input = {}) {
   const daemon = evaluateDaemon(input);
   const orchestrator = input.orchestrator ?? {state:'unknown',reason:'orchestrator-not-checked'};
-  const states = [daemon.state, orchestrator.state];
+  const layers = {daemon, orchestrator};
+  let repairStatus = input.prior?.repairStatus || {consecutiveFailures:0};
+  if (input.repair) {
+    const failed = input.repair.exit !== 0 || daemon.state !== 'ready';
+    repairStatus = {consecutiveFailures:failed ? repairStatus.consecutiveFailures + 1 : 0,
+      exit:input.repair.exit, lastAttemptAt:input.nowMs ?? Date.now()};
+  } else if (daemon.state === 'ready') {
+    repairStatus = {...repairStatus, consecutiveFailures:0};
+  }
+  if (repairStatus.consecutiveFailures > 0) {
+    layers.repair = {state:'unhealthy', reason:'repair-failed', ...repairStatus};
+  } else if (input.prior?.repairStatus?.consecutiveFailures > 0) {
+    layers.repair = {state:'ready', reason:'repair-recovered'};
+  }
+  const states = Object.values(layers).map(layer => layer.state);
   const state = states.includes('unknown') ? 'unknown' : states.includes('unhealthy') ? 'unhealthy' : 'ready';
-  return {state, action: state !== 'unknown' ? daemon.action : 'none', layers:{daemon,orchestrator}};
+  return {state, action: state !== 'unknown' ? daemon.action : 'none', layers, repairStatus};
 }
 export function transition(prior = {}, report, now = Date.now(), mergeMs = 900000) {
   const incidents = structuredClone(prior.incidents || {});
@@ -73,6 +87,12 @@ export function transition(prior = {}, report, now = Date.now(), mergeMs = 90000
       item.lastAlert=now; item.count++;
       events.push({op:'incident-reminder',incidentId:item.id,key,count:item.count});
     }
+    if (layer === 'repair') {
+      item.consecutiveFailures=detail.consecutiveFailures; item.exit=detail.exit;
+      for (const event of events.filter(event => event.key === key)) {
+        event.consecutiveFailures=detail.consecutiveFailures; event.exit=detail.exit;
+      }
+    }
     incidents[key]=item;
   }
   // Unknown does not prove recovery. Retain unresolved incidents until that layer is ready.
@@ -81,7 +101,7 @@ export function transition(prior = {}, report, now = Date.now(), mergeMs = 90000
       events.push({op:'incident-recovered',incidentId:item.id,key}); delete incidents[key];
     }
   }
-  return {state:{schemaVersion:1,incidents,lastRunAt:now,lastState:report.state},events};
+  return {state:{schemaVersion:1,incidents,lastRunAt:now,lastState:report.state,repairStatus:report.repairStatus},events};
 }
 if (resolve(process.argv[1] || '') === fileURLToPath(import.meta.url) && process.argv[2] === 'decide') {
   try {

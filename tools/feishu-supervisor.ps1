@@ -2,7 +2,7 @@
 <# One bounded supervision pass. Never stops/restarts a live daemon or DSH service. #>
 [CmdletBinding()]
 param(
-  [ValidateSet('Run','Install','Uninstall','Verify')][string]$Action='Run',
+  [ValidateSet('Run','Install','Uninstall','Verify','none')][string]$Action='Run',
   [ValidateSet('Monitor','Repair')][string]$Mode='Repair',
   [string]$HitlRoot=(Split-Path -Parent $PSScriptRoot),
   [string]$StateDir,
@@ -102,8 +102,21 @@ function Notify-Toast($message){
     $xml.LoadXml('<toast><visual><binding template="ToastGeneric"><text>DSH Feishu 监督</text><text>'+[Security.SecurityElement]::Escape($message)+'</text></binding></visual></toast>')
     [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('DSH.FeishuSupervisor').Show((New-Object Windows.UI.Notifications.ToastNotification $xml))
     return @{state='submitted'}
-  }catch{return @{state='failed';error=$_.Exception.Message}}
+  }catch{
+    # PowerShell 7 在本机加载不了 Windows.UI.Notifications 的 WinRT 类型，改由 5.1 发送。
+    # 5.1 需显式投影才拿得到 XmlDocument，故走独立脚本 tools/feishu-toast.ps1。
+    $fallback = Join-Path $HitlRoot 'tools/feishu-toast.ps1'
+    if (Test-Path -LiteralPath $fallback) {
+      $ps51 = Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/powershell.exe'
+      $r = Invoke-Bounded $ps51 @('-NoProfile','-ExecutionPolicy','Bypass','-File',$fallback,'-Title','DSH Feishu 通道监督','-Message',$message) 20
+      if ($r.exit -eq 0) { return @{state='submitted-via-5.1';detail=$r.output} }
+      return @{state='failed';error=($_.Exception.Message + ' | 5.1 fallback: ' + $r.output)}
+    }
+    return @{state='failed';error=$_.Exception.Message}
+  }
 }
+# -Action none：只定义函数、不执行（供单测/交互式调用 Notify-Toast 等）。
+if($Action -eq 'none'){ return }
 if($ObservationFile -and ($Action -ne 'Run' -or $Mode -ne 'Monitor' -or !$NoToast -or !$NoRemote)){throw 'Fixture requires Run/Monitor/NoToast/NoRemote'}
 if($Action -eq 'Install'){
   $existing=Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue

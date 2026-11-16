@@ -18,13 +18,20 @@ export function evaluateDaemon(input = {}) {
   const result = (state, reason, action = 'none') => ({ state, reason, action });
   if (!expected || !Array.isArray(rows)) return result('unknown', 'process-enumeration-unknown');
   const candidates = [];
+  const unreadable = [];
   for (const p of rows) {
     if (!/^(node|bun)(\.exe)?$/i.test(p.Name || '')) continue;
-    if (!p.CommandLine || !p.CreationDate) return result('unknown', 'process-identity-unreadable');
+    // 读不到命令行/创建时间的进程并不必然是守护进程（可能是受保护进程或刚启动的进程）。
+    // 单个这样的进程若让整轮置 unknown，会长期误报并反复告警（2026-11-16 实测）。
+    // 只有「心跳 pid 恰好落在不可读行」或「完全没有可读守护进程行」时才无法排除，才置 unknown。
+    if (!p.CommandLine || !p.CreationDate) { unreadable.push(p.ProcessId); continue; }
     const [exe, script] = entry(p.CommandLine);
     if (!/\/(node|bun)(\.exe)?$/i.test(normal(exe)) && !/^(node|bun)(\.exe)?$/i.test(exe)) continue;
     if (normal(script) === expected) candidates.push(p);
     else if (/feishu-daemon\.mjs$/i.test(script || '')) return result('unknown', 'other-daemon-entry');
+  }
+  if (unreadable.length > 0 && candidates.length === 0) {
+    return result('unknown', Number.isSafeInteger(input.beat?.pid) && unreadable.includes(input.beat.pid) ? 'process-identity-unreadable' : 'daemon-possibly-hidden');
   }
   if (candidates.length > 1) return result('unhealthy', 'multiple-daemon-instances');
   if (!beat || !Number.isSafeInteger(beat.pid) || beat.pid <= 0 || !Number.isFinite(beat.startedAt) || !Number.isFinite(beat.tickAt)) return result('unknown', 'heartbeat-invalid');

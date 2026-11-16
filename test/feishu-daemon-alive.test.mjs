@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { PATHS, feishuDaemonAlive } from "../lib/hitl-store.js";
 
+assert.ok(process.env.DSH_WECHAT_HITL_STATE, "本测试必须由 test/run-tests.ps1 设置 DSH_WECHAT_HITL_STATE 指向隔离目录");
 const beatFile = join(PATHS.stateDir, "feishu-daemon.json");
 mkdirSync(PATHS.stateDir, { recursive: true });
 

@@ -19,6 +19,7 @@ param(
   [string]$Action = 'start',
   [int]$TimeoutSeconds = 30,
   [string]$ConfigDir = '',
+  [string]$StateDir = '',
   # 自检用：指向别的心跳文件；不传则用生产 state\feishu-daemon.json
   [string]$BeatFileOverride = '',
   # 自检用：用 JSON 进程清单替代 CIM 枚举（沙箱内 CIM 可能被拒）
@@ -28,7 +29,9 @@ param(
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
 $daemon = Join-Path $root 'feishu\feishu-daemon.mjs'
-$beatFile = if ($BeatFileOverride) { $BeatFileOverride } else { Join-Path $root 'state\feishu-daemon.json' }
+if (-not $StateDir) { $StateDir = Join-Path $root 'state' }
+$StateDir = [IO.Path]::GetFullPath($StateDir)
+$beatFile = if ($BeatFileOverride) { $BeatFileOverride } else { Join-Path $StateDir 'feishu-daemon.json' }
 $stateDir = Split-Path -Parent $beatFile
 $outFile = Join-Path $stateDir 'feishu-daemon.out'
 $stopFile = Join-Path $stateDir 'feishu-daemon.stop'
@@ -165,14 +168,15 @@ function Start-DaemonCore {
   }
   $launchStartedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
   $nodeExe = (Get-Command node).Source
-  $cmdLine = 'cmd.exe /c "set DSH_HITL_CHANNEL=feishu&& set DSH_HITL_LARK_CONFIG_DIR=' + $chosenConfig + '&& set LARKSUITE_CLI_CONFIG_DIR=' + $chosenConfig + '&& ""' + $nodeExe + '"" ""' + $daemon + '"" >> ""' + $outFile + '"" 2>&1"'
+  $cmdLine = 'cmd.exe /d /s /c "set "DSH_WECHAT_HITL_STATE=' + $stateDir + '"&& set "DSH_HITL_CHANNEL=feishu"&& set "DSH_HITL_LARK_CONFIG_DIR=' + $chosenConfig + '"&& set "LARKSUITE_CLI_CONFIG_DIR=' + $chosenConfig + '"&& "' + $nodeExe + '" "' + $daemon + '" >> "' + $outFile + '" 2>&1"'
   $spawn = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmdLine }
   if ($spawn.ReturnValue -ne 0) {
     Write-Host ('!!! WMI 启动失败 ReturnValue=' + $spawn.ReturnValue + '，退回 Start-Process（耐久性较低）')
+    $env:DSH_WECHAT_HITL_STATE = $stateDir
     $env:DSH_HITL_CHANNEL = 'feishu'
     $env:DSH_HITL_LARK_CONFIG_DIR = $chosenConfig
     $env:LARKSUITE_CLI_CONFIG_DIR = $chosenConfig
-    Start-Process -FilePath $nodeExe -ArgumentList $daemon -WindowStyle Hidden -RedirectStandardOutput $outFile -RedirectStandardError ($outFile + '.err')
+    Start-Process -FilePath $nodeExe -ArgumentList ('"'+$daemon+'"') -WindowStyle Hidden -RedirectStandardOutput $outFile -RedirectStandardError ($outFile + '.err')
   } else {
     Write-Host ('feishu daemon spawned detached (launcher pid ' + $spawn.ProcessId + ', config=' + $chosenConfig + ')')
   }

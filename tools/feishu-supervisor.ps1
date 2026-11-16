@@ -85,7 +85,8 @@ function Observe {
   $current=Beat; if($current){$current.switchState=Current-Control}
   return @{beat=$current;previousBeat=$before;processes=(Processes);orchestrator=(Orchestrator);nowMs=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();daemonPath=(Join-Path $HitlRoot 'feishu/feishu-daemon.mjs')}
 }
-function Decide($ob,$prior){
+function Decide($ob,$prior,$repairResult=$null){
+  if($null -ne $repairResult){$ob.repair=$repairResult}
   $ob.prior=$prior;$ob.maxAgeMs=$HeartbeatMaxAgeSec*1000;$ob.mergeMs=$AlertMergeMinutes*60000
   Save-Atomic $inputFile $ob
   $run=Invoke-Bounded $node @($core,'decide',$inputFile,$outputFile) 15
@@ -152,10 +153,10 @@ try{
     # Second process/heartbeat observation closes the check/start gap. Start script and daemon lock recheck again.
     $again=Decide (Observe) $saved
     if($again.action -eq 'repair'){
-      $repair=Invoke-Bounded $pwsh @('-NoProfile','-File',(Join-Path $HitlRoot 'tools/restart-feishu-daemon.ps1'),'-Action','start','-TimeoutSeconds','30') 45
+      $repair=Invoke-Bounded $pwsh @('-NoProfile','-File',(Join-Path $HitlRoot 'tools/restart-feishu-daemon.ps1'),'-Action','start','-StateDir',$StateDir,'-TimeoutSeconds','30') 45
       $report.repair=$repair
       Log @{at=[DateTimeOffset]::Now.ToString('o');op='repair-attempt';result=$repair}
-      $report=Decide (Observe) $saved
+      $report=Decide (Observe) $saved $repair
       $report.repair=$repair;$saved=$report.persisted
       $saved.notifications=@((Get-Content $stateFile -Raw|ConvertFrom-Json -AsHashtable).notifications)+@($report.events|ForEach-Object{@{event=$_;pending=$true;attempts=0}})
       foreach($ev in $report.events){Log @{at=[DateTimeOffset]::Now.ToString('o');event=$ev}}
@@ -165,6 +166,7 @@ try{
   # Direct CLI egress: independent of monitored daemon and its shared outbox. No incoming reply required.
   foreach($notice in @($saved.notifications|Where-Object pending|Select-Object -First 3)){
     $text='Feishu 通道监督：'+$notice.event.op+' / '+$notice.event.key+' / incident '+$notice.event.incidentId
+    if($notice.event.ContainsKey('consecutiveFailures')){$text+=' / repair exit='+$notice.event.exit+' / consecutive failures='+$notice.event.consecutiveFailures}
     $notice.attempts=[int]$notice.attempts+1
     $toast=Notify-Toast $text
     if($NoRemote){$remote=@{exit=0;output='disabled'}}else{

@@ -19,6 +19,9 @@ const cases=[
  ['enumeration denied',{...good,processes:null},'unknown','none'],
  ['missing heartbeat',{...good,beat:null},'unknown','none'],
  ['unreadable node command',{...good,processes:[{...proc,CommandLine:''}]},'unknown','none'],
+ ['unrelated creation time unreadable',{...good,processes:[proc,child,{ProcessId:99,Name:'node.exe',CommandLine:'node runner.js',CreationDate:null}]},'ready','none'],
+ ['daemon creation time unreadable',{...good,processes:[{...proc,CreationDate:null},child]},'unknown','none'],
+ ['unreadable command blocks repair',{...dead,processes:[{ProcessId:99,Name:'node.exe',CommandLine:'',CreationDate:null}]},'unknown','none'],
  ['pid reused',{...good,processes:[{...proc,CreationDate:now-1000},child]},'unknown','none'],
  ['entry elsewhere',{...good,beat:{...beat,tickAt:now-40000},processes:[{...proc,CommandLine:'node D:/other/feishu-daemon.mjs'}]},'unknown','none'],
  ['runner mention excluded',{...dead,processes:[{...proc,CommandLine:'node runner.js -- prompt feishu-daemon.mjs'}]},'unhealthy','repair'],
@@ -73,8 +76,50 @@ test('kernel mutex skips overlapping runner and becomes available after owner ex
   const ran=execFileSync('pwsh',args,{encoding:'utf8',timeout:15000});assert.equal(JSON.parse(ran).verdict,'ready');
  }finally{if(p.exitCode===null)p.kill();rmSync(dir,{recursive:true,force:true})}
 });
-test('real isolated child death: only our disposable process is killed',async()=>{
+test('real isolated child death is reflected in observed process rows',async()=>{
  const p=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
  await new Promise((ok,fail)=>{p.once('spawn',ok);p.once('error',fail)});
- p.kill();await new Promise(ok=>p.once('exit',ok));assert.equal(evaluateDaemon(dead).action,'repair');
+ try {
+  const observed={...dead,beat:{...dead.beat,pid:p.pid},processes:[{...proc,ProcessId:p.pid}]};
+  assert.equal(evaluateDaemon(observed).action,'none');
+  p.kill();await new Promise(ok=>p.once('exit',ok));
+  let alive=true;try{process.kill(p.pid,0)}catch{alive=false}
+  assert.equal(alive,false);
+  assert.equal(evaluateDaemon({...observed,processes:alive?observed.processes:[]}).action,'repair');
+ }finally{if(p.exitCode===null)p.kill()}
+});
+test('failed repair persists, merges reminders, includes current count, and recovers',()=>{
+ const a=evaluateOverall({...dead,repair:{exit:3}});
+ assert.equal(a.layers.repair.consecutiveFailures,1);
+ const first=transition({},a,now);
+ const failure=first.events.find(e=>e.key==='repair:repair-failed');
+ assert.equal(failure.exit,3);assert.equal(failure.consecutiveFailures,1);
+ const b=evaluateOverall({...dead,prior:first.state,repair:{exit:124}});
+ const merged=transition(first.state,b,now+300000);
+ assert.equal(merged.events.length,0);assert.equal(merged.state.repairStatus.consecutiveFailures,2);
+ const c=evaluateOverall({...dead,prior:merged.state,repair:{exit:1}});
+ const reminded=transition(merged.state,c,now+900000);
+ const reminder=reminded.events.find(e=>e.key==='repair:repair-failed');
+ assert.equal(reminder.exit,1);assert.equal(reminder.consecutiveFailures,3);
+ const unknown=evaluateOverall({...good,processes:null,prior:reminded.state});
+ assert.equal(unknown.layers.repair.consecutiveFailures,3);assert.equal(unknown.action,'none');
+ const recovered=evaluateOverall({...good,prior:reminded.state});
+ assert.equal(recovered.repairStatus.consecutiveFailures,0);
+ assert.ok(transition(reminded.state,recovered,now+910000).events.some(e=>e.key==='repair:repair-failed'&&e.op==='incident-recovered'));
+ const falseSuccess=evaluateOverall({...dead,repair:{exit:0}});
+ assert.equal(falseSuccess.layers.repair.consecutiveFailures,1);
+});
+test('offline runner persists failed repair details across passes without launching services',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'feishu-supervisor-failure-'));
+ try{
+  const fixture=join(dir,'observation.json');
+  const run=input=>{writeFileSync(fixture,JSON.stringify(input));try{execFileSync('pwsh',['-NoProfile','-File',resolve('tools/feishu-supervisor.ps1'),'-Mode','Monitor','-StateDir',dir,'-ObservationFile',fixture,'-NoToast','-NoRemote','-Json'],{timeout:30000})}catch(e){assert.equal(e.status,1,String(e.stderr))}return JSON.parse(readFileSync(join(dir,'feishu-supervisor-state.json'),'utf8'))};
+  let s=run({...dead,repair:{exit:3}});assert.equal(s.repairStatus.consecutiveFailures,1);
+  assert.equal(s.notifications.find(n=>n.event.key==='repair:repair-failed').event.exit,3);
+  s=run({...dead,nowMs:now+900000,repair:{exit:124}});
+  assert.equal(s.repairStatus.consecutiveFailures,2);
+  assert.equal(s.notifications.filter(n=>n.event.key==='repair:repair-failed').at(-1).event.consecutiveFailures,2);
+  s=run(good);assert.equal(s.repairStatus.consecutiveFailures,0);
+  assert.ok(s.notifications.some(n=>n.event.key==='repair:repair-failed'&&n.event.op==='incident-recovered'));
+ }finally{rmSync(dir,{recursive:true,force:true})}
 });

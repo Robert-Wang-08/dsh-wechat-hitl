@@ -142,7 +142,7 @@ pwsh -NoProfile -File D:\src\dsh\dsh-wechat-hitl\tools\test-feishu-health.ps1 -J
 - **时间戳一律看偏移**：接口给的是 UTC（`…T04:04:39Z`），探针统一转成本地 `2026-11-14T12:04:39+08:00`。注意 PowerShell 的 `ConvertFrom-Json` 会把 ISO 串再转成 `[datetime]`，再 `[string]` 后偏移就丢了——人读时曾把 12:04 看成 04:04。
 - **运行时来源要留意**：探针的 `instance.detail.executable` 会显示 daemon 实际跑在哪个 `node.exe` 上。2026-11-14 实测它是 `…\cursor-agent\versions\2026.11.11-b912975\node.exe`（Cursor 自带 node），因为 `restart-feishu-daemon.ps1` 用 `(Get-Command node).Source` 依赖 PATH。运行中的进程不受影响，但"换 node 来源再重启"是未受控变量，重启后应回看这一行。
 - `-ProcessListFile <json>` 是**自检/宿主复核**用的注入缝：不经 CIM 直接喂进程清单（字段 `ProcessId/CreationDate/ExecutablePath/CommandLine`），用于验证身份比对逻辑；正常巡检不要用它。
-  自检：`pwsh -NoProfile -File test/test-feishu-health.ps1`（21 例，全用 `$env:TEMP` 假数据，不碰生产 state）。
+  自检：`pwsh -NoProfile -File test/test-feishu-health.ps1`（全用 `$env:TEMP` 假数据，不碰生产 state；实际例数以输出为准）。
 
 1. `node $fx status` → 看 `channel`、`switch.state`、`target.id`、`daemon.inbound`、`daemon.hint`。
 2. `state/feishu-daemon.json` 的 `hint`：`落点未设置` / `飞书应用权限被拦（21001）` / null。
@@ -169,4 +169,18 @@ pwsh -NoProfile -File D:\src\dsh\dsh-wechat-hitl\tools\test-feishu-health.ps1 -J
 
 `tools/register-feishu-supervisor.ps1 -Action Install -Mode Repair` 注册独立用户计划任务；`-Action Verify` 核查、`-Action Uninstall` 撤销。内核mutex串行监督及start，核对完整入口/PID/创建时间/心跳推进，只有确认死亡且无unknown才启动；活着但不健康只告警。incident首次、15分钟合并及恢复通知经独立CLI出站，失败持久重试。
 
-测试：`node --test test/feishu-supervisor.test.mjs`。运行数据：`state/feishu-supervisor-state.json`、`feishu-supervisor-latest.json`、`feishu-supervisor.log`。任务依赖登录用户，不保证注销/断电期间工作；安装不要求重启DSH或现有daemon。完整安装/回滚/限制见总仓库 `docs/ops/feishu-supervisor-20261116.md`。
+测试统一入口：`pwsh -NoProfile -File test/run-tests.ps1`（逐文件串行并设置隔离 state；不要用未隔离的 `node --test` 扫描整库）。探针专项：`pwsh -NoProfile -File test/test-feishu-health.ps1`。运行数据：`state/feishu-supervisor-state.json`、`feishu-supervisor-latest.json`、`feishu-supervisor.log`。任务依赖登录用户，不保证注销/断电期间工作；安装不要求重启DSH或现有daemon。完整安装/回滚/限制见总仓库 `docs/ops/feishu-supervisor-20261116.md`。
+
+### 修复失败与状态目录
+
+监督器修复失败单独记为 `repair:repair-failed` incident，首次即排队告警；后续按 15 分钟合并窗口提醒，载明最近退出码和连续失败次数。退出 0 但新观测仍未 ready 也算失败。unknown 不能清零失败次数；真实 ready 才关闭该 incident。原始命令输出仅在本机日志保存。
+
+`feishu-supervisor.ps1 -StateDir <absolute-directory>` 会把同一目录传给启动脚本；`restart-feishu-daemon.ps1 -StateDir <absolute-directory>` 在 CIM 和 fallback 启动时都显式设置 `DSH_WECHAT_HITL_STATE`。未指定仍采用检出内的 `state`，不受外层进程继承的该环境变量影响。请在监督器与 daemon 的管理命令中使用同一目录。
+
+### 无 owner 锁目录的人工恢复
+
+无可读 `owner.json` 时不自动抢锁：无法区分崩溃残留与另一启动者刚建目录、尚未写 owner 的窗口。此时启动会拒绝，监督器通过修复失败 incident 报告，不应不断盲目重启。
+
+维护操作顺序：先暂停 `DSH-Feishu-Supervisor` 及所有其他 daemon 启动入口，确认没有正在执行的监督/启动进程；用完整进程入口、PID、创建时间和两次心跳观测确认 daemon 已死。任一身份不可读或心跳仍推进即停止恢复。核对管理命令的 `StateDir` 绝对路径，并再次确认该目录下锁的 owner 仍缺失/不可读后，把 `feishu-daemon.lock` **改名保留为带时间戳的备份目录**，不要删除或覆盖其他 state。随后仅运行一次带同一 `-StateDir` 的 `-Action start`，验证新 owner、新心跳推进、入站 running 及真实收发，再恢复监督计划任务。
+
+回滚保留代码提交和锁备份；若新 daemon 已持锁，先按正常停机流程完成退出，不能在活跃进程下还原旧锁。本次补丁不操作生产计划任务、锁或 daemon。

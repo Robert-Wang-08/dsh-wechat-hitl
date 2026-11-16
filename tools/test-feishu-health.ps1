@@ -157,10 +157,13 @@ function Test-DaemonLayer {
     Start-Sleep -Seconds $SampleWaitSec
     $beat2 = $null
     try { $beat2 = Get-Content -LiteralPath $beatPath -Raw | ConvertFrom-Json } catch { $beat2 = $null }
+    if (-not $beat2) { return Set-Layer $layer 'unknown' 'heartbeat-resample-unreadable' ([ordered]@{ path = $beatPath }) }
     if ($beat2) {
       $advanceChecked = $true
       $sameInstance = ([int]$beat2.pid -eq $daemonPid) -and ([double]$beat2.startedAt -eq $startedAt)
       $tickAdvanced = ([double]$beat2.tickAt -gt $tickAt)
+      $inbound = [string]$beat2.inbound
+      $beat = $beat2
     }
   }
 

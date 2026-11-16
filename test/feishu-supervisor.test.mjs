@@ -123,3 +123,18 @@ test('offline runner persists failed repair details across passes without launch
   assert.ok(s.notifications.some(n=>n.event.key==='repair:repair-failed'&&n.event.op==='incident-recovered'));
  }finally{rmSync(dir,{recursive:true,force:true})}
 });
+
+test('单个不可读 node 进程不再让整轮误报 unknown', () => {
+  const r = evaluateOverall({ ...good, processes: [...good.processes, { ProcessId: 99, Name: 'node.exe', CommandLine: '', CreationDate: null }] });
+  assert.equal(r.state, 'ready');
+});
+test('心跳 pid 落在不可读行时仍判 unknown', () => {
+  const r = evaluateDaemon({ ...good, processes: [{ ProcessId: beat.pid, Name: 'node.exe', CommandLine: '', CreationDate: null }] });
+  assert.equal(r.state, 'unknown');
+  assert.equal(r.reason, 'process-identity-unreadable');
+});
+test('完全无可读守护进程行且有不可读行时判 unknown', () => {
+  const r = evaluateDaemon({ ...good, processes: [{ ProcessId: 99, Name: 'node.exe', CommandLine: '', CreationDate: null }] });
+  assert.equal(r.state, 'unknown');
+  assert.equal(r.reason, 'daemon-possibly-hidden');
+});

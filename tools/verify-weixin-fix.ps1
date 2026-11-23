@@ -6,8 +6,8 @@ param(
   [string]$WeixinLog = "$env:TEMP\openclaw\openclaw-$(Get-Date -Format 'yyyy-MM-dd').log"
 )
 $state = 'D:\src\dsh\dsh-wechat-hitl\state'
-$dbg   = 'C:\Users\wwm_1\.openclaw\state\dsh-bridge-debug.log'
-$ext   = 'C:\Users\wwm_1\.openclaw\extensions\openclaw-weixin'
+$dbg   = Join-Path $env:USERPROFILE '.openclaw\state\dsh-bridge-debug.log'
+$ext   = Join-Path $env:USERPROFILE '.openclaw\extensions\openclaw-weixin'
 $ok = 0; $bad = 0
 function Pass($m) { Write-Host ("  [PASS] " + $m) -ForegroundColor Green; $script:ok++ }
 function Fail($m) { Write-Host ("  [FAIL] " + $m) -ForegroundColor Red; $script:bad++ }

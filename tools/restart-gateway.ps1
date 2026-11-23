@@ -25,7 +25,7 @@ param(
   [switch]$Force
 )
 $ErrorActionPreference = 'Continue'
-$stateDir = 'C:\Users\wwm_1\.openclaw\state'
+$stateDir = Join-Path $env:USERPROFILE '.openclaw\state'
 $logFile = 'D:\src\dsh\dsh-wechat-hitl\state\gateway.log'
 $toolsDir = 'D:\src\dsh\dsh-wechat-hitl\tools'
 

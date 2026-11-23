@@ -374,14 +374,14 @@ test("超长通知优先压缩概要而不是直接截断总消息", () => {
 test("会话显示名优先取 DSH 真实标题", () => {
   const sample = JSON.stringify({
     version: 7,
-    record: { rows: { title: { ver: 1, seq: 6024, val: "NCBS翻译与词根｜全量交易" }, titleInput: { ver: 3, seq: 1, val: { text: "x" } } } },
+    record: { rows: { title: { ver: 1, seq: 6024, val: "DEMO翻译与词根｜全量交易" }, titleInput: { ver: 3, seq: 1, val: { text: "x" } } } },
   });
-  assert.equal(extractSessionTitle(sample), "NCBS翻译与词根｜全量交易");
+  assert.equal(extractSessionTitle(sample), "DEMO翻译与词根｜全量交易");
   assert.equal(extractSessionTitle(JSON.stringify({ rows: { title: { val: null } } })), "");
   assert.equal(extractSessionTitle("no title here"), "");
   const real = readSessionTitle("session-7e16012b-9fc7-4302-9ad2-e1bad808c3c5");
   assert.equal(typeof real, "string");
-  assert.doesNotMatch(sessionDisplayName("session-7e16012b-9fc7-4302-9ad2-e1bad808c3c5"), /^ncbs·/);
+  assert.doesNotMatch(sessionDisplayName("session-7e16012b-9fc7-4302-9ad2-e1bad808c3c5"), /^demo·/);
 });
 
 test("会话通知控制：默认开且不限长（Q1=B）；long 可设上限并真的生效", () => {

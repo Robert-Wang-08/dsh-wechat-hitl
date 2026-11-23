@@ -49,7 +49,7 @@ $env:LARKSUITE_CLI_CONFIG_DIR = "$env:USERPROFILE\.lark-cli-hitl-aa67"   # 半�
   `fx-hitl probe` 仍投递成功（`message_id om_x100b602e687110a4dd1b1e665378bae`），
   说明污染环境下出口不再被拦。
 - 重建 daemon：`fx-hitl status` → `daemon.up=true, inbound=running`，configDir 为
-  `C:\Users\wwm_1\.lark-cli-dsh-superagent-feishu2`。
+  `<用户目录>\.lark-cli-dsh-superagent-feishu2`。
 - 重启后 DSH Web（pid 24864）`plugin-loaded` 正常，端口 3080 正常监听。
 
 ## 以后

@@ -85,6 +85,6 @@ pwsh -NoProfile -File "D:\src\dsh\dsh-wechat-hitl\tools\restart-gateway.ps1" -Ti
 ```powershell
 netstat -ano | Select-String ':18789.*LISTENING'          # pid 应不再是 36892
 Get-Content D:\src\dsh\dsh-wechat-hitl\state\gateway.log -Tail 20
-Select-String 'C:\Users\wwm_1\.openclaw\state\dsh-bridge-debug.log' -Pattern 'egress|inproc' | Select-Object -Last 5
+Select-String '<用户目录>\.openclaw\state\dsh-bridge-debug.log' -Pattern 'egress|inproc' | Select-Object -Last 5
 Select-String D:\src\dsh\dsh-wechat-hitl\state\hitl.log -Pattern 'inproc-egress|outbox-egress' | Select-Object -Last 5
 ```

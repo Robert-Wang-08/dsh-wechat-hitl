@@ -9,9 +9,9 @@ process.env.DSH_WECHAT_HITL_STATE = TEST_BASE + "/channel"; // 子目录：state
 const store = await import("../lib/hitl-store.js");
 
 const rows = [
-  { index: 1, sessionId: "session-aaa", code: 50, name: "信用账户SRS修订与待核事项", workspace: "D:\\src\\ncbs" },
+  { index: 1, sessionId: "session-aaa", code: 50, name: "示例会话一", workspace: "D:\\work\\demo" },
   { index: 2, sessionId: "session-bbb", code: 7, name: "日报", workspace: "D:\\work\\a" },
-  { index: 3, sessionId: "session-ccc", code: 12, name: "翻译·菜单", workspace: "D:\\src\\ncbs" },
+  { index: 3, sessionId: "session-ccc", code: 12, name: "示例会话二", workspace: "D:\\work\\demo" },
 ];
 
 test("非指令不算命令", () => {
@@ -40,7 +40,7 @@ test("码不存在时退回「第 N 行」兜底", () => {
 });
 
 test("标题唯一命中；多条命中报歧义不猜；找不到返回 null", () => {
-  assert.equal(store.resolveBindTarget("信用账户", rows).sessionId, "session-aaa");
+  assert.equal(store.resolveBindTarget("示例会话一", rows).sessionId, "session-aaa");
   const ambiguous = store.resolveBindTarget("翻译", [
     { index: 1, sessionId: "session-x1", code: 1, name: "翻译·菜单" },
     { index: 2, sessionId: "session-x2", code: 2, name: "翻译·词根" },
